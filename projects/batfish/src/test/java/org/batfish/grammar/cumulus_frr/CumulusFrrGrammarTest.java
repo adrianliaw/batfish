@@ -32,6 +32,7 @@ import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.tree.ParseTreeWalker;
 import org.apache.commons.lang3.SerializationUtils;
 import org.batfish.common.BatfishLogger;
+import org.batfish.common.Warning;
 import org.batfish.common.Warnings;
 import org.batfish.config.Settings;
 import org.batfish.datamodel.Bgpv4Route;
@@ -51,6 +52,8 @@ import org.batfish.main.Batfish;
 import org.batfish.representation.cumulus.BgpInterfaceNeighbor;
 import org.batfish.representation.cumulus.BgpIpNeighbor;
 import org.batfish.representation.cumulus.BgpNeighbor;
+import org.batfish.representation.cumulus.BgpNeighborSourceAddress;
+import org.batfish.representation.cumulus.BgpNeighborSourceInterface;
 import org.batfish.representation.cumulus.BgpPeerGroupNeighbor;
 import org.batfish.representation.cumulus.BgpRedistributionPolicy;
 import org.batfish.representation.cumulus.BgpVrfAddressFamilyAggregateNetworkConfiguration;
@@ -1192,5 +1195,72 @@ public class CumulusFrrGrammarTest {
   public void testBgpConfederationId() {
     parseLines("router bgp 65001", "bgp confederation identifier 100");
     assertThat(_config.getBgpProcess().getDefaultVrf().getConfederationId(), equalTo(100L));
+  }
+
+  @Test
+  public void testStaticRoute_vrf_noDefinition() {
+    _warnings = new Warnings(false, true, false);
+    parseLines("ip route 1.2.3.4/24 1.1.1.1 vrf VRF");
+
+    assertThat(
+        _warnings.getRedFlagWarnings(),
+        contains(
+            new Warning(
+                "the static route is ignored since vrf VRF is not defined",
+                Warnings.TAG_RED_FLAG)));
+  }
+
+  @Test
+  public void testStaticRoute_vrf_withDefinition() {
+    _warnings = new Warnings(false, true, false);
+
+    _config.getVrfs().put("VRF", new Vrf("VRF"));
+    parseLines("ip route 1.2.3.0/24 1.1.1.1 vrf VRF");
+
+    assertThat(_warnings.getRedFlagWarnings(), empty());
+
+    assertThat(
+        _config.getVrfs().get("VRF").getStaticRoutes(),
+        contains(new StaticRoute(Prefix.parse("1.2.3.0/24"), Ip.parse("1.1.1.1"), null)));
+  }
+
+  @Test
+  public void testStaticRoute_defaultVrf() {
+    parseLines("ip route 1.2.3.4/24 1.1.1.1");
+    assertThat(
+        _config.getStaticRoutes(),
+        equalTo(
+            ImmutableSet.of(
+                new StaticRoute(Prefix.parse("1.2.3.4/24"), Ip.parse("1.1.1.1"), null))));
+  }
+
+  @Test
+  public void testBgpNeighborUpdateSource_Address() {
+    parseLines("router bgp 65001", "neighbor 1.1.1.1 update-source 2.2.2.2");
+
+    assertNotNull(_config.getBgpProcess());
+    assertThat(
+        _config
+            .getBgpProcess()
+            .getDefaultVrf()
+            .getNeighbors()
+            .get("1.1.1.1")
+            .getBgpNeighborSource(),
+        equalTo(new BgpNeighborSourceAddress(Ip.parse("2.2.2.2"))));
+  }
+
+  @Test
+  public void testBgpNeighborUpdateSource_Interface() {
+    parseLines("router bgp 65001", "neighbor 1.1.1.1 update-source lo");
+
+    assertNotNull(_config.getBgpProcess());
+    assertThat(
+        _config
+            .getBgpProcess()
+            .getDefaultVrf()
+            .getNeighbors()
+            .get("1.1.1.1")
+            .getBgpNeighborSource(),
+        equalTo(new BgpNeighborSourceInterface("lo")));
   }
 }

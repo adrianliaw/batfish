@@ -113,6 +113,8 @@ import org.batfish.common.plugin.PluginClientType;
 import org.batfish.common.plugin.PluginConsumer;
 import org.batfish.common.plugin.TracerouteEngine;
 import org.batfish.common.runtime.SnapshotRuntimeData;
+import org.batfish.common.topology.Layer1Edge;
+import org.batfish.common.topology.Layer1Topology;
 import org.batfish.common.topology.TopologyContainer;
 import org.batfish.common.topology.TopologyProvider;
 import org.batfish.common.util.BatfishObjectMapper;
@@ -127,7 +129,6 @@ import org.batfish.datamodel.DeviceType;
 import org.batfish.datamodel.Edge;
 import org.batfish.datamodel.Flow;
 import org.batfish.datamodel.FlowDisposition;
-import org.batfish.datamodel.GenericConfigObject;
 import org.batfish.datamodel.IntegerSpace;
 import org.batfish.datamodel.Interface;
 import org.batfish.datamodel.Interface.Dependency;
@@ -211,6 +212,8 @@ import org.batfish.representation.iptables.IptablesVendorConfiguration;
 import org.batfish.role.InferRoles;
 import org.batfish.role.NodeRoleDimension;
 import org.batfish.role.NodeRolesData;
+import org.batfish.role.NodeRolesData.Type;
+import org.batfish.role.RoleMapping;
 import org.batfish.specifier.AllInterfaceLinksLocationSpecifier;
 import org.batfish.specifier.AllInterfacesLocationSpecifier;
 import org.batfish.specifier.InferFromLocationIpSpaceSpecifier;
@@ -228,6 +231,7 @@ import org.batfish.version.BatfishVersion;
 import org.codehaus.jettison.json.JSONException;
 import org.codehaus.jettison.json.JSONObject;
 import org.jgrapht.Graph;
+import org.jgrapht.graph.DefaultEdge;
 import org.jgrapht.graph.SimpleDirectedGraph;
 import org.jgrapht.traverse.TopologicalOrderIterator;
 
@@ -789,15 +793,15 @@ public class Batfish extends PluginConsumer implements IBatfish {
   }
 
   private Map<String, Configuration> convertConfigurations(
-      Map<String, GenericConfigObject> vendorConfigurations,
+      Map<String, VendorConfiguration> vendorConfigurations,
       SnapshotRuntimeData runtimeData,
       ConvertConfigurationAnswerElement answerElement) {
     _logger.info("\n*** CONVERTING VENDOR CONFIGURATIONS TO INDEPENDENT FORMAT ***\n");
     _logger.resetTimer();
     Map<String, Configuration> configurations = new TreeMap<>();
     List<ConvertConfigurationJob> jobs = new ArrayList<>();
-    for (Entry<String, GenericConfigObject> config : vendorConfigurations.entrySet()) {
-      GenericConfigObject vc = config.getValue();
+    for (Entry<String, VendorConfiguration> config : vendorConfigurations.entrySet()) {
+      VendorConfiguration vc = config.getValue();
       ConvertConfigurationJob job =
           new ConvertConfigurationJob(
               _settings, runtimeData.getRuntimeData(config.getKey()), vc, config.getKey());
@@ -881,7 +885,7 @@ public class Batfish extends PluginConsumer implements IBatfish {
                 String::compareTo, Entry::getKey, Entry::getValue));
   }
 
-  public Map<String, GenericConfigObject> deserializeVendorConfigurations(
+  public Map<String, VendorConfiguration> deserializeVendorConfigurations(
       Path serializedVendorConfigPath) {
     _logger.info("\n*** DESERIALIZING VENDOR CONFIGURATION STRUCTURES ***\n");
     _logger.resetTimer();
@@ -895,8 +899,8 @@ public class Batfish extends PluginConsumer implements IBatfish {
     } catch (IOException e) {
       throw new BatfishException("Error reading vendor configs directory", e);
     }
-    Map<String, GenericConfigObject> vendorConfigurations =
-        deserializeObjects(namesByPath, GenericConfigObject.class);
+    Map<String, VendorConfiguration> vendorConfigurations =
+        deserializeObjects(namesByPath, VendorConfiguration.class);
     _logger.printElapsedTime();
     return vendorConfigurations;
   }
@@ -1025,7 +1029,7 @@ public class Batfish extends PluginConsumer implements IBatfish {
 
   /** Returns a map of hostname to VI {@link Configuration} */
   public Map<String, Configuration> getConfigurations(
-      Map<String, GenericConfigObject> vendorConfigurations,
+      Map<String, VendorConfiguration> vendorConfigurations,
       SnapshotRuntimeData runtimeData,
       ConvertConfigurationAnswerElement answerElement) {
     Map<String, Configuration> configurations =
@@ -1758,7 +1762,7 @@ public class Batfish extends PluginConsumer implements IBatfish {
         .forEach(
             config -> {
               Map<String, Interface> allInterfaces = config.getAllInterfaces();
-              Graph<String, Dependency> graph = new SimpleDirectedGraph<>(Dependency.class);
+              Graph<String, DefaultEdge> graph = new SimpleDirectedGraph<>(DefaultEdge.class);
               allInterfaces.keySet().forEach(graph::addVertex);
               allInterfaces
                   .values()
@@ -1770,12 +1774,10 @@ public class Batfish extends PluginConsumer implements IBatfish {
                                   dependency ->
                                       graph.addEdge(
                                           // Reverse edge direction to aid topological sort
-                                          dependency.getInterfaceName(),
-                                          iface.getName(),
-                                          dependency)));
+                                          dependency.getInterfaceName(), iface.getName())));
 
               // Traverse interfaces in topological order and deactivate if necessary
-              for (TopologicalOrderIterator<String, Dependency> iterator =
+              for (TopologicalOrderIterator<String, DefaultEdge> iterator =
                       new TopologicalOrderIterator<>(graph);
                   iterator.hasNext(); ) {
                 String ifaceName = iterator.next();
@@ -2373,7 +2375,7 @@ public class Batfish extends PluginConsumer implements IBatfish {
           firstNonNull(
               _storage.loadRuntimeData(networkSnapshot.getNetwork(), networkSnapshot.getSnapshot()),
               EMPTY_SNAPSHOT_RUNTIME_DATA);
-      Map<String, GenericConfigObject> vendorConfigs;
+      Map<String, VendorConfiguration> vendorConfigs;
       Map<String, Configuration> configurations;
       try (ActiveSpan convertSpan =
           GlobalTracer.get()
@@ -2384,13 +2386,28 @@ public class Batfish extends PluginConsumer implements IBatfish {
         configurations = getConfigurations(vendorConfigs, runtimeData, answerElement);
       }
 
+      Set<Layer1Edge> layer1Edges =
+          vendorConfigs.values().stream()
+              .flatMap(vc -> vc.getLayer1Edges().stream())
+              .collect(ImmutableSet.toImmutableSet());
+
       addInternetAndIspNodes(configurations, vendorConfigs, answerElement.getWarnings());
 
       try (ActiveSpan storeSpan =
           GlobalTracer.get().buildSpan("Store vendor-independent configs").startActive()) {
         assert storeSpan != null; // avoid unused warning
-        _storage.storeConfigurations(
-            configurations, answerElement, _settings.getContainer(), _testrigSettings.getName());
+        try {
+          _storage.storeConfigurations(
+              configurations,
+              answerElement,
+              // we don't write anything if no Layer1 edges were produced
+              // empty topologies are currently dangerous for L1 computation
+              layer1Edges.isEmpty() ? null : new Layer1Topology(layer1Edges),
+              _settings.getContainer(),
+              _testrigSettings.getName());
+        } catch (IOException e) {
+          throw new BatfishException("Could not store vendor independent configs to disk: %s", e);
+        }
       }
 
       try (ActiveSpan ppSpan =
@@ -2404,7 +2421,7 @@ public class Batfish extends PluginConsumer implements IBatfish {
 
   private void addInternetAndIspNodes(
       Map<String, Configuration> configurations,
-      Map<String, GenericConfigObject> vendorConfigs,
+      Map<String, VendorConfiguration> vendorConfigs,
       SortedMap<String, Warnings> warnings) {
     if (configurations.containsKey(INTERNET_HOST_NAME)) {
       warnings
@@ -2424,7 +2441,7 @@ public class Batfish extends PluginConsumer implements IBatfish {
     }
 
     vendorConfigs.values().stream()
-        .map(GenericConfigObject::getBorderInterfaces)
+        .map(VendorConfiguration::getBorderInterfaces)
         .filter(Objects::nonNull)
         .filter(l -> !l.isEmpty())
         .forEach(
@@ -2456,12 +2473,13 @@ public class Batfish extends PluginConsumer implements IBatfish {
     NodeRolesId snapshotNodeRolesId = _idResolver.getSnapshotNodeRolesId(networkId, snapshotId);
     Set<String> nodeNames = loadConfigurations().keySet();
     Topology rawLayer3Topology = _topologyProvider.getRawLayer3Topology(getNetworkSnapshot());
-    List<NodeRoleDimension> autoRoles = new InferRoles(nodeNames, rawLayer3Topology).inferRoles();
+    Optional<RoleMapping> autoRoles = new InferRoles(nodeNames, rawLayer3Topology).inferRoles();
     NodeRolesData.Builder snapshotNodeRoles = NodeRolesData.builder();
     try {
-      if (!autoRoles.isEmpty()) {
-        snapshotNodeRoles.setDefaultDimension(autoRoles.get(0).getName());
-        snapshotNodeRoles.setRoleDimensions(autoRoles);
+      if (autoRoles.isPresent()) {
+        snapshotNodeRoles.setDefaultDimension(NodeRoleDimension.AUTO_DIMENSION_PRIMARY);
+        snapshotNodeRoles.setRoleMappings(ImmutableList.of(autoRoles.get()));
+        snapshotNodeRoles.setType(Type.AUTO);
       }
       _storage.storeNodeRoles(snapshotNodeRoles.build(), snapshotNodeRolesId);
     } catch (IOException e) {

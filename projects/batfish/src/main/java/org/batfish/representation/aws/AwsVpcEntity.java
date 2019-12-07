@@ -1,12 +1,16 @@
 package org.batfish.representation.aws;
 
+/** An interface implemented by all AWS entities */
+@SuppressWarnings("JavaDoc") // all constants below create a warning
 public interface AwsVpcEntity {
 
   String JSON_KEY_ACCEPTED_ROUTE_COUNT = "AcceptedRouteCount";
   String JSON_KEY_ACCEPTER_VPC_INFO = "AccepterVpcInfo";
   String JSON_KEY_ADDRESSES = "Addresses";
   String JSON_KEY_ALLOCATION_ID = "AllocationId";
+  String JSON_KEY_AMAZON_SIDE_ASN = "AmazonSideAsn";
   String JSON_KEY_ASSOCIATION = "Association";
+  String JSON_KEY_ASSOCIATION_DEFAULT_ROUTE_TABLE_ID = "AssociationDefaultRouteTableId";
   String JSON_KEY_ASSOCIATIONS = "Associations";
   String JSON_KEY_ATTACHMENT = "Attachment";
   String JSON_KEY_ATTACHMENTS = "Attachments";
@@ -15,7 +19,9 @@ public interface AwsVpcEntity {
   String JSON_KEY_BGP_ASN = "BgpAsn";
   String JSON_KEY_CIDR_BLOCK = "CidrBlock";
   String JSON_KEY_CIDR_BLOCK_ASSOCIATION_SET = "CidrBlockAssociationSet";
+  String JSON_KEY_CIDR_BLOCK_SET = "CidrBlockSet";
   String JSON_KEY_CIDR_IP = "CidrIp";
+  String JSON_KEY_CIDRS = "Cidrs";
   String JSON_KEY_CODE = "Code";
   String JSON_KEY_CREATED = "Created";
   String JSON_KEY_CUSTOMER_GATEWAY_CONFIGURATION = "CustomerGatewayConfiguration";
@@ -25,9 +31,14 @@ public interface AwsVpcEntity {
   String JSON_KEY_DB_INSTANCE_IDENTIFIER = "DBInstanceIdentifier";
   String JSON_KEY_DB_INSTANCE_STATUS = "DBInstanceStatus";
   String JSON_KEY_DB_SUBNET_GROUP = "DBSubnetGroup";
+  String JSON_KEY_DEFAULT_ASSOCIATION_ROUTE_TABLE = "DefaultAssociationRouteTable";
+  String JSON_KEY_DEFAULT_PROPAGATION_ROUTE_TABLE = "DefaultPropagationRouteTable";
+  String JSON_KEY_DEFAULT_ROUTE_TABLE_ASSOCIATION = "DefaultRouteTableAssociation";
+  String JSON_KEY_DEFAULT_ROUTE_TABLE_PROPAGATION = "DefaultRouteTablePropagation";
   String JSON_KEY_DELETED = "Deleted";
   String JSON_KEY_DESCRIPTION = "Description";
   String JSON_KEY_DESTINATION_CIDR_BLOCK = "DestinationCidrBlock";
+  String JSON_KEY_DESTINATION_IPV6_CIDR_BLOCK = "DestinationIpv6CidrBlock";
   String JSON_KEY_DHCP_OPTIONS = "DhcpOptions";
   String JSON_KEY_DOMAIN_NAME = "DomainName";
   String JSON_KEY_DOMAIN_STATUS_LIST = "DomainStatusList";
@@ -39,6 +50,7 @@ public interface AwsVpcEntity {
   String JSON_KEY_GROUP_ID = "GroupId";
   String JSON_KEY_GROUP_NAME = "GroupName";
   String JSON_KEY_GROUPS = "Groups";
+  String JSON_KEY_ICMP_TYPE_CODE = "IcmpTypeCode";
   String JSON_KEY_INSTANCE_ID = "InstanceId";
   String JSON_KEY_INSTANCE_STATUSES = "InstanceStatuses";
   String JSON_KEY_INSTANCES = "Instances";
@@ -49,6 +61,8 @@ public interface AwsVpcEntity {
   String JSON_KEY_IP_PERMISSIONS_EGRESS = "IpPermissionsEgress";
   String JSON_KEY_IP_PROTOCOL = "IpProtocol";
   String JSON_KEY_IP_RANGES = "IpRanges";
+  String JSON_KEY_IPV6_CIDR_BLOCK = "Ipv6CidrBlock";
+  String JSON_KEY_IS_DEFAULT = "IsDefault";
   String JSON_KEY_KEY = "Key";
   String JSON_KEY_MAIN = "Main";
   String JSON_KEY_MULTI_AZ = "MultiAZ";
@@ -64,13 +78,20 @@ public interface AwsVpcEntity {
   String JSON_KEY_OUTSIDE_IP_ADDRESS = "OutsideIpAddress";
   String JSON_KEY_PLACEMENT_GROUPS = "PlacementGroups";
   String JSON_KEY_PORT_RANGE = "PortRange";
+  String JSON_KEY_PREFIX_LIST_ID = "PrefixListId";
+  String JSON_KEY_PREFIX_LIST_IDS = "PrefixListIds";
+  String JSON_KEY_PREFIX_LIST_NAME = "PrefixListName";
+  String JSON_KEY_PREFIX_LISTS = "PrefixLists";
   String JSON_KEY_PRIMARY = "Primary";
   String JSON_KEY_PRIVATE_IP_ADDRESS = "PrivateIpAddress";
   String JSON_KEY_PRIVATE_IP_ADDRESSES = "PrivateIpAddresses";
+  String JSON_KEY_PROPAGATION_DEFAULT_ROUTE_TABLE_ID = "PropagationDefaultRouteTableId";
   String JSON_KEY_PROTOCOL = "Protocol";
   String JSON_KEY_PRIVATE_IP = "PrivateIp";
   String JSON_KEY_PUBLIC_IP = "PublicIp";
   String JSON_KEY_REGIONS = "Regions";
+  String JSON_KEY_RESOURCE_ID = "ResourceId";
+  String JSON_KEY_RESOURCE_TYPE = "ResourceType";
   String JSON_KEY_REQUESTER_VPC_INFO = "RequesterVpcInfo";
   String JSON_KEY_RESERVATIONS = "Reservations";
   String JSON_KEY_ROUTE_TABLE_ID = "RouteTableId";
@@ -94,6 +115,16 @@ public interface AwsVpcEntity {
   String JSON_KEY_TAGS = "Tags";
   String JSON_KEY_TO = "To";
   String JSON_KEY_TO_PORT = "ToPort";
+  String JSON_KEY_TRANSIT_GATEWAY_ATTACHMENT_ID = "TransitGatewayAttachmentId";
+  String JSON_KEY_TRANSIT_GATEWAY_ATTACHMENTS = "TransitGatewayAttachments";
+  String JSON_KEY_TRANSIT_GATEWAY_PROPAGATIONS = "TransitGatewayPropagations";
+  String JSON_KEY_TRANSIT_GATEWAY_ID = "TransitGatewayId";
+  String JSON_KEY_TRANSIT_GATEWAY_ROUTE_TABLE_ID = "TransitGatewayRouteTableId";
+  String JSON_KEY_TRANSIT_GATEWAY_ROUTE_TABLE_PROPAGATIONS = "TransitGatewayRouteTablePropagations";
+  String JSON_KEY_TRANSIT_GATEWAY_ROUTE_TABLES = "TransitGatewayRouteTables";
+  String JSON_KEY_TRANSIT_GATEWAY_STATIC_ROUTES = "TransitGatewayStaticRoutes";
+  String JSON_KEY_TRANSIT_GATEWAY_VPC_ATTACHMENTS = "TransitGatewayVpcAttachments";
+  String JSON_KEY_TRANSIT_GATEWAYS = "TransitGateways";
   String JSON_KEY_TYPE = "Type";
   String JSON_KEY_USER_GROUP_ID_PAIRS = "UserIdGroupPairs";
   String JSON_KEY_VALUE = "Value";
@@ -109,10 +140,15 @@ public interface AwsVpcEntity {
   String JSON_KEY_VPCS = "Vpcs";
   String JSON_KEY_VPN_CONNECTION_ID = "VpnConnectionId";
   String JSON_KEY_VPN_CONNECTIONS = "VpnConnections";
+  String JSON_KEY_VPN_ECMP_SUPPORT = "VpnEcmpSupport";
   String JSON_KEY_VPN_GATEWAY_ID = "VpnGatewayId";
   String JSON_KEY_VPN_GATEWAYS = "VpnGateways";
 
+  String STATE_AVAILABLE = "available";
+  String STATE_ASSOCIATED = "associated";
   String STATE_DELETED = "deleted";
+
+  String STATUS_ACTIVE = "active";
   String STATUS_DELETED = "deleted";
 
   String XML_KEY_ASN = "asn";

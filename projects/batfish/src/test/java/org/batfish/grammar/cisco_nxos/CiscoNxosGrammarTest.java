@@ -483,6 +483,38 @@ public final class CiscoNxosGrammarTest {
   }
 
   @Test
+  public void testImplicitShutdownSwitchportInference() throws IOException {
+    for (String hostname :
+        ImmutableList.of(
+            "shutdown-switchport-inference-defaultl2", "shutdown-switchport-inference-defaultl3")) {
+      Configuration c = parseConfig(hostname);
+      assertThat(
+          c,
+          hasInterface(
+              "Ethernet1/1",
+              allOf(isActive(), hasSwitchPortMode(org.batfish.datamodel.SwitchportMode.NONE))));
+      assertThat(
+          c,
+          hasInterface(
+              "Ethernet1/2",
+              allOf(
+                  isActive(false), hasSwitchPortMode(org.batfish.datamodel.SwitchportMode.NONE))));
+      assertThat(
+          c,
+          hasInterface(
+              "Ethernet1/3",
+              allOf(isActive(), hasSwitchPortMode(org.batfish.datamodel.SwitchportMode.ACCESS))));
+      assertThat(
+          c,
+          hasInterface(
+              "Ethernet1/4",
+              allOf(
+                  isActive(false),
+                  hasSwitchPortMode(org.batfish.datamodel.SwitchportMode.ACCESS))));
+    }
+  }
+
+  @Test
   public void testAaaParsing() {
     // TODO: make into extraction test
     assertThat(parseVendorConfig("nxos_aaa"), notNullValue());
@@ -593,6 +625,8 @@ public final class CiscoNxosGrammarTest {
 
       BgpVrfL2VpnEvpnAddressFamilyConfiguration l2vpn = vrf.getL2VpnEvpnAddressFamily();
       assertThat(l2vpn, notNullValue());
+      assertThat(l2vpn.getMaximumPathsIbgp(), equalTo(64));
+      assertThat(l2vpn.getMaximumPathsEbgp(), equalTo(1));
       assertThat(l2vpn.getRetainMode(), equalTo(RetainRouteType.ROUTE_MAP));
       assertThat(l2vpn.getRetainRouteMap(), equalTo("RETAIN_MAP"));
     }

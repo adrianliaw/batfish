@@ -6,24 +6,20 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.MoreObjects;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 import java.io.Serializable;
 import java.util.HashSet;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.Objects;
 import java.util.Set;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.ParametersAreNonnullByDefault;
+import org.batfish.common.Warnings;
 import org.batfish.datamodel.ConcreteInterfaceAddress;
 import org.batfish.datamodel.Configuration;
-import org.batfish.datamodel.HeaderSpace;
 import org.batfish.datamodel.IpAccessListLine;
 import org.batfish.datamodel.IpWildcard;
-import org.batfish.datamodel.TcpFlagsMatchConditions;
-import org.batfish.datamodel.acl.MatchHeaderSpace;
-import org.batfish.datamodel.visitors.HeaderSpaceConverter;
 
 /** Represents an AWS security group */
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -67,84 +63,26 @@ final class SecurityGroup implements AwsVpcEntity, Serializable {
     _usersIpSpace = new HashSet<>();
   }
 
-  private static void addEgressAccessLines(
-      List<IpPermissions> permsList, List<IpAccessListLine> accessList, Region region) {
-    for (IpPermissions ipPerms : permsList) {
-      HeaderSpace headerSpace = ipPerms.toEgressIpAccessListLine(region);
-      // Destination IPs should have been populated using either SG or IP ranges,  if not then this
-      // Ip perm is incomplete
-      if (headerSpace.getDstIps() != null) {
-        accessList.add(IpAccessListLine.acceptingHeaderSpace(headerSpace));
-      }
+  /** Adds any access lines for this security group to the inbound and outbound rules. */
+  void addInOutAccessLines(
+      List<IpAccessListLine> inboundRules,
+      List<IpAccessListLine> outboundRules,
+      Region region,
+      Warnings warnings) {
+    for (ListIterator<IpPermissions> it = _ipPermsIngress.listIterator(); it.hasNext(); ) {
+      int seq = it.nextIndex();
+      IpPermissions p = it.next();
+      p.toIpAccessListLine(
+              true, region, _groupId + " - " + _groupName + " [ingress] " + seq, warnings)
+          .ifPresent(inboundRules::add);
     }
-  }
-
-  private static void addIngressAccessLines(
-      List<IpPermissions> permsList, List<IpAccessListLine> accessList, Region region) {
-    for (IpPermissions ipPerms : permsList) {
-      HeaderSpace headerSpace = ipPerms.toIngressIpAccessListLine(region);
-      // Source IPs should have been populated using either SG or IP ranges, if not then this Ip
-      // perm is incomplete
-      if (headerSpace.getSrcIps() != null) {
-        accessList.add(IpAccessListLine.acceptingHeaderSpace(headerSpace));
-      }
+    for (ListIterator<IpPermissions> it = _ipPermsEgress.listIterator(); it.hasNext(); ) {
+      int seq = it.nextIndex();
+      IpPermissions p = it.next();
+      p.toIpAccessListLine(
+              false, region, _groupId + " - " + _groupName + " [egress] " + seq, warnings)
+          .ifPresent(outboundRules::add);
     }
-  }
-
-  private static void addReverseAcls(
-      List<IpAccessListLine> inboundRules, List<IpAccessListLine> outboundRules) {
-
-    List<IpAccessListLine> reverseInboundRules =
-        inboundRules.stream()
-            .map(
-                ipAccessListLine -> {
-                  HeaderSpace srcHeaderSpace =
-                      HeaderSpaceConverter.convert(ipAccessListLine.getMatchCondition());
-                  return IpAccessListLine.builder()
-                      .setMatchCondition(
-                          new MatchHeaderSpace(
-                              HeaderSpace.builder()
-                                  .setIpProtocols(srcHeaderSpace.getIpProtocols())
-                                  .setDstIps(srcHeaderSpace.getSrcIps())
-                                  .setSrcPorts(srcHeaderSpace.getDstPorts())
-                                  .setTcpFlags(
-                                      ImmutableSet.of(TcpFlagsMatchConditions.ACK_TCP_FLAG))
-                                  .build()))
-                      .setAction(ipAccessListLine.getAction())
-                      .build();
-                })
-            .collect(ImmutableList.toImmutableList());
-
-    List<IpAccessListLine> reverseOutboundRules =
-        outboundRules.stream()
-            .map(
-                ipAccessListLine -> {
-                  HeaderSpace srcHeaderSpace =
-                      HeaderSpaceConverter.convert(ipAccessListLine.getMatchCondition());
-                  return IpAccessListLine.builder()
-                      .setMatchCondition(
-                          new MatchHeaderSpace(
-                              HeaderSpace.builder()
-                                  .setIpProtocols(srcHeaderSpace.getIpProtocols())
-                                  .setSrcIps(srcHeaderSpace.getDstIps())
-                                  .setSrcPorts(srcHeaderSpace.getDstPorts())
-                                  .setTcpFlags(
-                                      ImmutableSet.of(TcpFlagsMatchConditions.ACK_TCP_FLAG))
-                                  .build()))
-                      .setAction(ipAccessListLine.getAction())
-                      .build();
-                })
-            .collect(ImmutableList.toImmutableList());
-
-    addToBeginning(inboundRules, reverseOutboundRules);
-    addToBeginning(outboundRules, reverseInboundRules);
-  }
-
-  public void addInOutAccessLines(
-      List<IpAccessListLine> inboundRules, List<IpAccessListLine> outboundRules, Region region) {
-    addIngressAccessLines(_ipPermsIngress, inboundRules, region);
-    addEgressAccessLines(_ipPermsEgress, outboundRules, region);
-    addReverseAcls(inboundRules, outboundRules);
   }
 
   @Nonnull
@@ -182,13 +120,6 @@ final class SecurityGroup implements AwsVpcEntity, Serializable {
         .map(ConcreteInterfaceAddress::getIp)
         .map(IpWildcard::create)
         .forEach(ipWildcard -> getUsersIpSpace().add(ipWildcard));
-  }
-
-  private static void addToBeginning(
-      List<IpAccessListLine> ipAccessListLines, List<IpAccessListLine> toBeAdded) {
-    for (int i = toBeAdded.size() - 1; i >= 0; i--) {
-      ipAccessListLines.add(0, toBeAdded.get(i));
-    }
   }
 
   @Override

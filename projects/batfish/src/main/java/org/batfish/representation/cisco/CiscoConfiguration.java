@@ -15,8 +15,6 @@ import static org.batfish.representation.cisco.AristaConversions.getVrfForVlan;
 import static org.batfish.representation.cisco.CiscoConversions.clearFalseStatementsAndAddMatchOwnAsn;
 import static org.batfish.representation.cisco.CiscoConversions.computeDistributeListPolicies;
 import static org.batfish.representation.cisco.CiscoConversions.convertCryptoMapSet;
-import static org.batfish.representation.cisco.CiscoConversions.convertMatchesAnyToCommunitySetMatchExpr;
-import static org.batfish.representation.cisco.CiscoConversions.convertMatchesEveryToCommunitySetMatchExpr;
 import static org.batfish.representation.cisco.CiscoConversions.eigrpRedistributionPoliciesToStatements;
 import static org.batfish.representation.cisco.CiscoConversions.generateBgpExportPolicy;
 import static org.batfish.representation.cisco.CiscoConversions.generateBgpImportPolicy;
@@ -27,8 +25,6 @@ import static org.batfish.representation.cisco.CiscoConversions.resolveIsakmpPro
 import static org.batfish.representation.cisco.CiscoConversions.resolveKeyringIfaceNames;
 import static org.batfish.representation.cisco.CiscoConversions.resolveTunnelIfaceNames;
 import static org.batfish.representation.cisco.CiscoConversions.toCommunityList;
-import static org.batfish.representation.cisco.CiscoConversions.toCommunityMatchExpr;
-import static org.batfish.representation.cisco.CiscoConversions.toCommunitySetExpr;
 import static org.batfish.representation.cisco.CiscoConversions.toIkePhase1Key;
 import static org.batfish.representation.cisco.CiscoConversions.toIkePhase1Policy;
 import static org.batfish.representation.cisco.CiscoConversions.toIkePhase1Proposal;
@@ -57,7 +53,6 @@ import com.google.common.collect.Multimaps;
 import java.util.AbstractMap.SimpleEntry;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -262,6 +257,7 @@ public final class CiscoConfiguration extends VendorConfiguration {
           .put("HundredGigE", "HundredGigabitEthernet")
           .put("ip", "ip")
           .put("Group-Async", "Group-Async")
+          .put("lo", "Loopback")
           .put("LongReachEthernet", "LongReachEthernet")
           .put("Loopback", "Loopback")
           .put("ma", "Management")
@@ -505,8 +501,6 @@ public final class CiscoConfiguration extends VendorConfiguration {
 
   private final Map<String, RouteMap> _routeMaps;
 
-  private final Map<String, RoutePolicy> _routePolicies;
-
   /**
    * Maps zone names to integers. Only includes zones that were created for security levels. In
    * effect, the reverse of computeSecurityLevelZoneName.
@@ -549,8 +543,6 @@ public final class CiscoConfiguration extends VendorConfiguration {
 
   private final Map<String, TrackMethod> _trackingGroups;
 
-  private Map<String, XrCommunitySet> _communitySets;
-
   // initialized when needed
   private Multimap<Integer, Interface> _interfacesBySecurityLevel;
 
@@ -558,7 +550,6 @@ public final class CiscoConfiguration extends VendorConfiguration {
     _asPathAccessLists = new TreeMap<>();
     _asPathSets = new TreeMap<>();
     _cf = new CiscoFamily();
-    _communitySets = new TreeMap<>();
     _cryptoNamedRsaPubKeys = new TreeMap<>();
     _cryptoMapSets = new HashMap<>();
     _dhcpRelayServers = new ArrayList<>();
@@ -595,7 +586,6 @@ public final class CiscoConfiguration extends VendorConfiguration {
     _prefix6Lists = new TreeMap<>();
     _protocolObjectGroups = new TreeMap<>();
     _routeMaps = new TreeMap<>();
-    _routePolicies = new TreeMap<>();
     _securityLevels = new TreeMap<>();
     _securityZonePairs = new TreeMap<>();
     _securityZones = new TreeMap<>();
@@ -909,10 +899,6 @@ public final class CiscoConfiguration extends VendorConfiguration {
     return _routeMaps;
   }
 
-  public Map<String, RoutePolicy> getRoutePolicies() {
-    return _routePolicies;
-  }
-
   @Nullable
   private String getSecurityZoneName(Interface iface) {
     String zoneName = iface.getSecurityZone();
@@ -1075,30 +1061,53 @@ public final class CiscoConfiguration extends VendorConfiguration {
   }
 
   private void processFailoverSettings() {
-    if (_failover) {
-      Interface commIface;
-      ConcreteInterfaceAddress commAddress;
-      Interface sigIface;
-      ConcreteInterfaceAddress sigAddress;
-      if (_failoverSecondary) {
-        commIface = _interfaces.get(_failoverCommunicationInterface);
-        commAddress = _failoverStandbyAddresses.get(_failoverCommunicationInterfaceAlias);
-        sigIface = _interfaces.get(_failoverStatefulSignalingInterface);
-        sigAddress = _failoverStandbyAddresses.get(_failoverStatefulSignalingInterfaceAlias);
-        for (Interface iface : _interfaces.values()) {
-          iface.setAddress(iface.getStandbyAddress());
-        }
-      } else {
-        commIface = _interfaces.get(_failoverCommunicationInterface);
-        commAddress = _failoverPrimaryAddresses.get(_failoverCommunicationInterfaceAlias);
-        sigIface = _interfaces.get(_failoverStatefulSignalingInterface);
-        sigAddress = _failoverPrimaryAddresses.get(_failoverStatefulSignalingInterfaceAlias);
-      }
-      commIface.setAddress(commAddress);
-      commIface.setActive(true);
-      sigIface.setAddress(sigAddress);
-      sigIface.setActive(true);
+    if (!_failover) {
+      return;
     }
+
+    if (_failoverCommunicationInterface == null
+        || _failoverCommunicationInterfaceAlias == null
+        || _failoverStatefulSignalingInterface == null
+        || _failoverStatefulSignalingInterfaceAlias == null) {
+      _w.redFlag(
+          "Unable to process failover configuration: one of failover communication or stateful signaling interfaces is unset");
+      return;
+    }
+
+    Interface commIface = _interfaces.get(_failoverCommunicationInterface);
+    Interface sigIface = _interfaces.get(_failoverStatefulSignalingInterface);
+    if (commIface == null) {
+      _w.redFlag(
+          String.format(
+              "Unable to process failover configuration: communication interface %s is not present",
+              _failoverCommunicationInterface));
+      return;
+    }
+    if (sigIface == null) {
+      _w.redFlag(
+          String.format(
+              "Unable to process failover configuration: stateful signaling interface %s is not present",
+              _failoverStatefulSignalingInterface));
+      return;
+    }
+
+    ConcreteInterfaceAddress commAddress;
+    ConcreteInterfaceAddress sigAddress;
+
+    if (_failoverSecondary) {
+      commAddress = _failoverStandbyAddresses.get(_failoverCommunicationInterfaceAlias);
+      sigAddress = _failoverStandbyAddresses.get(_failoverStatefulSignalingInterfaceAlias);
+      for (Interface iface : _interfaces.values()) {
+        iface.setAddress(iface.getStandbyAddress());
+      }
+    } else {
+      commAddress = _failoverPrimaryAddresses.get(_failoverCommunicationInterfaceAlias);
+      sigAddress = _failoverPrimaryAddresses.get(_failoverStatefulSignalingInterfaceAlias);
+    }
+    commIface.setAddress(commAddress);
+    commIface.setActive(true);
+    sigIface.setAddress(sigAddress);
+    sigIface.setActive(true);
   }
 
   public void setDnsSourceInterface(String dnsSourceInterface) {
@@ -1210,8 +1219,6 @@ public final class CiscoConfiguration extends VendorConfiguration {
     }
     newBgpProcess.setMultipathEbgp(multipathEbgp);
     newBgpProcess.setMultipathIbgp(multipathIbgp);
-
-    int defaultMetric = proc.getDefaultMetric();
 
     /*
      * Create common bgp export policy. This policy encompasses network
@@ -1589,7 +1596,7 @@ public final class CiscoConfiguration extends VendorConfiguration {
               .setRouteReflectorClient(lpg.getRouteReflectorClient())
               .build());
       newNeighborBuilder.setClusterId(clusterId.asLong());
-      newNeighborBuilder.setDefaultMetric(defaultMetric);
+      newNeighborBuilder.setDefaultMetric(proc.getDefaultMetric());
       newNeighborBuilder.setDescription(description);
       newNeighborBuilder.setEbgpMultihop(lpg.getEbgpMultihop());
       if (defaultRoute != null) {
@@ -1651,7 +1658,7 @@ public final class CiscoConfiguration extends VendorConfiguration {
     if (ipv4af != null) {
       Stream<Prefix> summaryOnlyNetworks =
           bgpVrf.getV4aggregates().entrySet().stream()
-              .filter(e -> e.getValue().getSummaryOnly())
+              .filter(e -> firstNonNull(e.getValue().getSummaryOnly(), Boolean.FALSE))
               .map(Entry::getKey);
       If suppressLonger = suppressSummarizedPrefixes(c, vrfName, summaryOnlyNetworks);
       if (suppressLonger != null) {
@@ -2986,30 +2993,6 @@ public final class CiscoConfiguration extends VendorConfiguration {
     return output;
   }
 
-  private RoutingPolicy toRoutingPolicy(Configuration c, RoutePolicy routePolicy) {
-    String name = routePolicy.getName();
-    RoutingPolicy rp = new RoutingPolicy(name, c);
-    List<Statement> statements = rp.getStatements();
-    for (RoutePolicyStatement routePolicyStatement : routePolicy.getStatements()) {
-      routePolicyStatement.applyTo(statements, this, c, _w);
-    }
-    // At the end of a routing policy, we terminate based on the context.
-    // 1. we're in call expr context, so we return the local default action of this policy.
-    // 2. we're in call statement context, so we just return
-    // 3. otherwise, we reach the end of the policy and return the policy's default action.
-    If endPolicyBasedOnContext =
-        new If(
-            BooleanExprs.CALL_EXPR_CONTEXT,
-            Collections.singletonList(Statements.ReturnLocalDefaultAction.toStaticStatement()),
-            Collections.singletonList(
-                new If(
-                    BooleanExprs.CALL_STATEMENT_CONTEXT,
-                    Collections.singletonList(Statements.Return.toStaticStatement()),
-                    Collections.singletonList(Statements.DefaultAction.toStaticStatement()))));
-    statements.add(endPolicyBasedOnContext);
-    return rp;
-  }
-
   @Override
   public String toString() {
     if (_hostname != null) {
@@ -3097,7 +3080,6 @@ public final class CiscoConfiguration extends VendorConfiguration {
       CommunityList cList = toCommunityList(ecList);
       c.getCommunityLists().put(cList.getName(), cList);
     }
-    convertCommunitySets(c);
 
     // convert prefix lists to route filter lists
     for (PrefixList prefixList : _prefixLists.values()) {
@@ -3236,12 +3218,6 @@ public final class CiscoConfiguration extends VendorConfiguration {
       // convert route maps to RoutingPolicy objects
       RoutingPolicy newPolicy = toRoutingPolicy(c, map);
       c.getRoutingPolicies().put(newPolicy.getName(), newPolicy);
-    }
-
-    // convert RoutePolicy to RoutingPolicy
-    for (RoutePolicy routePolicy : _routePolicies.values()) {
-      RoutingPolicy routingPolicy = toRoutingPolicy(c, routePolicy);
-      c.getRoutingPolicies().put(routingPolicy.getName(), routingPolicy);
     }
 
     createInspectClassMapAcls(c);
@@ -3603,6 +3579,15 @@ public final class CiscoConfiguration extends VendorConfiguration {
                 org.batfish.datamodel.Vrf vrf = getVrfForVlan(c, vlan).orElse(c.getDefaultVrf());
                 vrf.getVniSettings().put(vni, toVniSettings(_eosVxlan, vni, vlan, sourceIface));
               });
+      _eosVxlan
+          .getVrfToVni()
+          .forEach(
+              (vrfName, vni) ->
+                  Optional.ofNullable(c.getVrfs().get(vrfName))
+                      .map(
+                          vrf ->
+                              vrf.getVniSettings()
+                                  .put(vni, toVniSettings(_eosVxlan, vni, null, sourceIface))));
     }
 
     // Define the Null0 interface if it has been referenced. Otherwise, these show as undefined
@@ -3618,13 +3603,6 @@ public final class CiscoConfiguration extends VendorConfiguration {
 
     markConcreteStructure(
         CiscoStructureType.BFD_TEMPLATE, CiscoStructureUsage.INTERFACE_BFD_TEMPLATE);
-
-    markConcreteStructure(
-        CiscoStructureType.COMMUNITY_SET,
-        CiscoStructureUsage.ROUTE_POLICY_COMMUNITY_MATCHES_ANY,
-        CiscoStructureUsage.ROUTE_POLICY_COMMUNITY_MATCHES_EVERY,
-        CiscoStructureUsage.ROUTE_POLICY_DELETE_COMMUNITY_IN,
-        CiscoStructureUsage.ROUTE_POLICY_SET_COMMUNITY);
 
     markConcreteStructure(
         CiscoStructureType.SECURITY_ZONE_PAIR, CiscoStructureUsage.SECURITY_ZONE_PAIR_SELF_REF);
@@ -3746,9 +3724,6 @@ public final class CiscoConfiguration extends VendorConfiguration {
         CiscoStructureUsage.OSPF6_DISTRIBUTE_LIST_PREFIX_LIST_OUT,
         CiscoStructureUsage.ROUTE_MAP_MATCH_IPV6_PREFIX_LIST);
 
-    markConcreteStructure(
-        CiscoStructureType.PREFIX_SET, CiscoStructureUsage.ROUTE_POLICY_PREFIX_SET);
-
     // mark references to route-maps
     markConcreteStructure(
         CiscoStructureType.ROUTE_MAP,
@@ -3798,14 +3773,6 @@ public final class CiscoConfiguration extends VendorConfiguration {
         CiscoStructureUsage.RIP_REDISTRIBUTE_BGP_MAP,
         CiscoStructureUsage.RIP_REDISTRIBUTE_CONNECTED_MAP,
         CiscoStructureUsage.RIP_REDISTRIBUTE_STATIC_MAP);
-
-    markConcreteStructure(
-        CiscoStructureType.ROUTE_POLICY,
-        CiscoStructureUsage.BGP_ADDITIONAL_PATHS_SELECTION_ROUTE_POLICY,
-        CiscoStructureUsage.BGP_AGGREGATE_ROUTE_POLICY,
-        CiscoStructureUsage.BGP_NEIGHBOR_ROUTE_POLICY_IN,
-        CiscoStructureUsage.BGP_NEIGHBOR_ROUTE_POLICY_OUT,
-        CiscoStructureUsage.ROUTE_POLICY_APPLY);
 
     // Cable
     markConcreteStructure(
@@ -3945,9 +3912,6 @@ public final class CiscoConfiguration extends VendorConfiguration {
         CiscoStructureUsage.BGP_NEIGHBOR_FILTER_AS_PATH_ACCESS_LIST,
         CiscoStructureUsage.ROUTE_MAP_MATCH_AS_PATH_ACCESS_LIST);
 
-    markConcreteStructure(
-        CiscoStructureType.AS_PATH_SET, CiscoStructureUsage.ROUTE_POLICY_AS_PATH_IN);
-
     // BGP inheritance. This is complicated, as there are many similar-but-overlapping concepts
     markConcreteStructure(CiscoStructureType.BGP_AF_GROUP, CiscoStructureUsage.BGP_USE_AF_GROUP);
     markConcreteStructure(
@@ -3972,26 +3936,10 @@ public final class CiscoConfiguration extends VendorConfiguration {
     return ImmutableList.of(c);
   }
 
-  private void convertCommunitySets(Configuration c) {
-    _communitySets.forEach(
-        (name, communitySet) -> {
-          c.getCommunitySetMatchExprs()
-              .put(
-                  computeCommunitySetMatchAnyName(name),
-                  convertMatchesAnyToCommunitySetMatchExpr(communitySet, c));
-          c.getCommunitySetMatchExprs()
-              .put(
-                  computeCommunitySetMatchEveryName(name),
-                  convertMatchesEveryToCommunitySetMatchExpr(communitySet, c));
-          c.getCommunityMatchExprs().put(name, toCommunityMatchExpr(communitySet, c));
-          c.getCommunitySetExprs().put(name, toCommunitySetExpr(communitySet, c));
-        });
-  }
-
   private static VniSettings toVniSettings(
       @Nonnull AristaEosVxlan vxlan,
       @Nonnull Integer vni,
-      @Nonnull Integer vlan,
+      @Nullable Integer vlan,
       @Nullable Interface sourceInterface) {
     Ip sourceAddress =
         sourceInterface == null
@@ -4000,7 +3948,9 @@ public final class CiscoConfiguration extends VendorConfiguration {
 
     // Prefer VLAN-specific or general flood address (in that order) over multicast address
     SortedSet<Ip> bumTransportIps =
-        firstNonNull(vxlan.getVlanFloodAddresses().get(vlan), vxlan.getFloodAddresses());
+        firstNonNull(
+            vlan != null ? vxlan.getVlanFloodAddresses().get(vlan) : null,
+            vxlan.getFloodAddresses());
 
     // default to unicast flooding unless specified otherwise
     BumTransportMethod bumTransportMethod = BumTransportMethod.UNICAST_FLOOD_GROUP;
@@ -4550,9 +4500,5 @@ public final class CiscoConfiguration extends VendorConfiguration {
 
   public Map<String, TrackMethod> getTrackingGroups() {
     return _trackingGroups;
-  }
-
-  public Map<String, XrCommunitySet> getCommunitySets() {
-    return _communitySets;
   }
 }

@@ -245,14 +245,14 @@ eos_rbi_bgp
   BGP
   (
     eos_rbib_additional_paths
-//    | eos_rbib_advertise_inactive
+    | eos_rbib_advertise_inactive
 //    | eos_rbib_allowas_in
 //    | eos_rbib_always_compare_med
 //    | eos_rbib_asn
 //    | eos_rbib_auto_local_addr
     | eos_rbib_bestpath
 //    | eos_rbib_client_to_client
-//    | eos_rbib_cluster_id
+    | eos_rbib_cluster_id
 //    | eos_rbib_confederation
 //    | eos_rbib_control_plane_filter
 //    | eos_rbib_convergence
@@ -261,7 +261,7 @@ eos_rbi_bgp
 //    | eos_rbib_host_routes
 //    | eos_rbib_labeled_unicast
     | eos_rbib_listen
-//    | eos_rbib_log_neighbor_changes
+    | eos_rbib_log_neighbor_changes
 //    | eos_rbib_missing_policy
 //    | eos_rbib_monitoring
 //    | eos_rbib_next_hop_unchanged
@@ -281,6 +281,11 @@ eos_rbib_additional_paths
     | INSTALL
   )
   NEWLINE
+;
+
+eos_rbib_advertise_inactive
+:
+  ADVERTISE_INACTIVE NEWLINE
 ;
 
 eos_rbib_bestpath
@@ -314,6 +319,11 @@ eos_rbibbpa_multipath_relax
   MULTIPATH_RELAX NEWLINE
 ;
 
+eos_rbib_cluster_id
+:
+  CLUSTER_ID ip = IP_ADDRESS NEWLINE
+;
+
 eos_rbib_listen
 :
   LISTEN
@@ -342,6 +352,11 @@ eos_rbibl_range
     | REMOTE_AS asn = bgp_asn
   )
   NEWLINE
+;
+
+eos_rbib_log_neighbor_changes
+:
+  LOG_NEIGHBOR_CHANGES NEWLINE
 ;
 
 eos_rbi_default_metric
@@ -449,7 +464,7 @@ eos_rbi_neighbor_common
     | eos_rbinc_remote_as
     | eos_rbinc_remove_private_as
     | eos_rbafnc_route_map
-//    | eos_rbinc_route_reflector_client
+    | eos_rbinc_route_reflector_client
 //    | eos_rbinc_route_to_peer
     | eos_rbinc_send_community
     | eos_rbinc_shutdown
@@ -564,6 +579,11 @@ eos_rbinc_remote_as
 eos_rbinc_remove_private_as
 :
   REMOVE_PRIVATE_AS (ALL REPLACE_AS?)? NEWLINE
+;
+
+eos_rbinc_route_reflector_client
+:
+  ROUTE_REFLECTOR_CLIENT NEWLINE
 ;
 
 eos_rbinc_send_community
@@ -697,12 +717,20 @@ eos_rbino_neighbor
     | v6 = IPV6_ADDRESS
     | pg = variable
   )
-  eos_rbinon_enforce_first_as
+  (
+    eos_rbinon_enforce_first_as
+    | eos_rbinon_shutdown
+  )
 ;
 
 eos_rbinon_enforce_first_as
 :
   ENFORCE_FIRST_AS NEWLINE
+;
+
+eos_rbinon_shutdown
+:
+  SHUTDOWN NEWLINE
 ;
 
 // Defining a peer group
@@ -720,7 +748,8 @@ eos_rbi_redistribute
 :
   REDISTRIBUTE
   (
-    eos_rbir_attached_host
+    eos_rbir_aggregate
+    | eos_rbir_attached_host
     | eos_rbir_connected
     | eos_rbir_dynamic
     | eos_rbir_isis
@@ -729,6 +758,14 @@ eos_rbi_redistribute
     | eos_rbir_rip
     | eos_rbir_static
   )
+;
+
+eos_rbir_aggregate
+:
+  // This should not ever show up in real configs, but some engineering builds did include it.
+  // > Important! Aggregate routes are redistributed automatically, and their redistribution cannot be disabled.
+  // https://www.arista.com/en/um-eos/eos-section-33-4-bgp-commands#ww1117813
+  AGGREGATE NEWLINE
 ;
 
 eos_rbir_attached_host

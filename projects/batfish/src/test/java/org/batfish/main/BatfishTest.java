@@ -1,6 +1,6 @@
 package org.batfish.main;
 
-import static org.batfish.common.util.ThrowableMatchers.hasStackTrace;
+import static org.batfish.common.matchers.ThrowableMatchers.hasStackTrace;
 import static org.batfish.main.Batfish.postProcessInterfaceDependencies;
 import static org.batfish.main.Batfish.readAllFiles;
 import static org.hamcrest.Matchers.anEmptyMap;
@@ -682,7 +682,7 @@ public class BatfishTest {
         .setActive(true)
         .setDependencies(ImmutableSet.of(new Dependency("eth1", DependencyType.BIND)))
         .build();
-    ib.setName("eth9").setActive(true).build();
+    ib.setName("eth9").setDependencies(ImmutableSet.of()).setActive(true).build();
 
     ImmutableSet<String> activeIfaces = ImmutableSet.of("eth9");
     ImmutableSet<String> inactiveIfaces = ImmutableSet.of("eth0", "eth1", "eth2");

@@ -52,6 +52,7 @@ import static org.batfish.datamodel.matchers.ConfigurationMatchers.hasIpsecPhase
 import static org.batfish.datamodel.matchers.ConfigurationMatchers.hasIpsecPhase2Proposal;
 import static org.batfish.datamodel.matchers.ConfigurationMatchers.hasMlagConfig;
 import static org.batfish.datamodel.matchers.ConfigurationMatchers.hasVendorFamily;
+import static org.batfish.datamodel.matchers.ConfigurationMatchers.hasVrf;
 import static org.batfish.datamodel.matchers.ConfigurationMatchers.hasVrfs;
 import static org.batfish.datamodel.matchers.DataModelMatchers.hasAclName;
 import static org.batfish.datamodel.matchers.DataModelMatchers.hasBandwidth;
@@ -169,8 +170,6 @@ import static org.batfish.grammar.cisco.CiscoControlPlaneExtractor.SERIAL_LINE;
 import static org.batfish.main.BatfishTestUtils.configureBatfishTestSettings;
 import static org.batfish.representation.cisco.CiscoConfiguration.computeBgpPeerImportPolicyName;
 import static org.batfish.representation.cisco.CiscoConfiguration.computeCombinedOutgoingAclName;
-import static org.batfish.representation.cisco.CiscoConfiguration.computeCommunitySetMatchAnyName;
-import static org.batfish.representation.cisco.CiscoConfiguration.computeCommunitySetMatchEveryName;
 import static org.batfish.representation.cisco.CiscoConfiguration.computeIcmpObjectGroupAclName;
 import static org.batfish.representation.cisco.CiscoConfiguration.computeInspectClassMapAclName;
 import static org.batfish.representation.cisco.CiscoConfiguration.computeInspectPolicyMapAclName;
@@ -200,7 +199,6 @@ import static org.batfish.representation.cisco.CiscoStructureType.NETWORK_OBJECT
 import static org.batfish.representation.cisco.CiscoStructureType.NETWORK_OBJECT_GROUP;
 import static org.batfish.representation.cisco.CiscoStructureType.PREFIX6_LIST;
 import static org.batfish.representation.cisco.CiscoStructureType.PREFIX_LIST;
-import static org.batfish.representation.cisco.CiscoStructureType.PREFIX_SET;
 import static org.batfish.representation.cisco.CiscoStructureType.PROTOCOL_OBJECT_GROUP;
 import static org.batfish.representation.cisco.CiscoStructureType.PROTOCOL_OR_SERVICE_OBJECT_GROUP;
 import static org.batfish.representation.cisco.CiscoStructureType.ROUTE_MAP;
@@ -371,12 +369,6 @@ import org.batfish.datamodel.ospf.OspfProcess;
 import org.batfish.datamodel.ospf.StubType;
 import org.batfish.datamodel.routing_policy.Environment.Direction;
 import org.batfish.datamodel.routing_policy.RoutingPolicy;
-import org.batfish.datamodel.routing_policy.communities.CommunityContext;
-import org.batfish.datamodel.routing_policy.communities.CommunityMatchExpr;
-import org.batfish.datamodel.routing_policy.communities.CommunitySet;
-import org.batfish.datamodel.routing_policy.communities.CommunitySetExpr;
-import org.batfish.datamodel.routing_policy.communities.CommunitySetExprEvaluator;
-import org.batfish.datamodel.routing_policy.communities.CommunitySetMatchExpr;
 import org.batfish.datamodel.routing_policy.expr.BooleanExpr;
 import org.batfish.datamodel.routing_policy.expr.Conjunction;
 import org.batfish.datamodel.routing_policy.expr.DestinationNetwork;
@@ -981,6 +973,32 @@ public final class CiscoGrammarTest {
 
     assertThat(
         config, hasInterface("inside", hasEigrp(EigrpInterfaceSettingsMatchers.hasPassive(true))));
+  }
+
+  @Test
+  public void testAsaFailoverExtraction() {
+    CiscoConfiguration config = parseCiscoConfig("asa-failover", ConfigurationFormat.CISCO_ASA);
+    assertThat(config.getFailover(), equalTo(true));
+    assertThat(config.getFailoverSecondary(), equalTo(false));
+    assertThat(config.getFailoverCommunicationInterface(), equalTo("GigabitEthernet0/2"));
+    assertThat(config.getFailoverCommunicationInterfaceAlias(), equalTo("FAILOVER"));
+    assertThat(config.getFailoverStatefulSignalingInterface(), equalTo("GigabitEthernet0/3"));
+    assertThat(config.getFailoverStatefulSignalingInterfaceAlias(), equalTo("REPLICATION"));
+    assertThat(
+        config.getFailoverPrimaryAddresses(),
+        hasEntry("FAILOVER", ConcreteInterfaceAddress.parse("172.16.1.1/30")));
+    assertThat(
+        config.getFailoverStandbyAddresses(),
+        hasEntry("FAILOVER", ConcreteInterfaceAddress.parse("172.16.1.2/30")));
+  }
+
+  @Test
+  public void testAsaFailoverConversion() throws IOException {
+    Configuration config = parseConfig("asa-failover");
+    assertThat(
+        config,
+        hasInterface(
+            "GigabitEthernet0/2", hasAddress(ConcreteInterfaceAddress.parse("172.16.1.1/30"))));
   }
 
   @Test
@@ -1617,7 +1635,7 @@ public final class CiscoGrammarTest {
 
     /* Confirm both processes are present */
     assertThat(c, hasDefaultVrf(hasEigrpProcesses(hasKey(1L))));
-    assertThat(c, ConfigurationMatchers.hasVrf("vrf-name", hasEigrpProcesses(hasKey(2L))));
+    assertThat(c, hasVrf("vrf-name", hasEigrpProcesses(hasKey(2L))));
 
     /* Confirm interfaces were matched */
     assertThat(c, hasInterface("Ethernet0", hasEigrp(EigrpInterfaceSettingsMatchers.hasAsn(1L))));
@@ -1634,7 +1652,7 @@ public final class CiscoGrammarTest {
 
     /* Confirm both processes are present */
     assertThat(c, hasDefaultVrf(hasEigrpProcesses(hasKey(1L))));
-    assertThat(c, ConfigurationMatchers.hasVrf("vrf-name", hasEigrpProcesses(hasKey(2L))));
+    assertThat(c, hasVrf("vrf-name", hasEigrpProcesses(hasKey(2L))));
 
     /* Confirm interfaces were matched */
     assertThat(c, hasInterface("Ethernet0", hasEigrp(EigrpInterfaceSettingsMatchers.hasAsn(1L))));
@@ -1673,7 +1691,7 @@ public final class CiscoGrammarTest {
     assertThat(c, hasInterface("Ethernet0", hasEigrp(EigrpInterfaceSettingsMatchers.hasAsn(1L))));
 
     /* Confirm named mode networks are configured correctly */
-    assertThat(c, ConfigurationMatchers.hasVrf("vrf-name", hasEigrpProcesses(hasKey(2L))));
+    assertThat(c, hasVrf("vrf-name", hasEigrpProcesses(hasKey(2L))));
     assertThat(c, hasInterface("Ethernet1", hasEigrp(EigrpInterfaceSettingsMatchers.hasAsn(2L))));
   }
 
@@ -3297,97 +3315,6 @@ public final class CiscoGrammarTest {
   }
 
   @Test
-  public void testIosXrBanner() throws IOException {
-    Configuration c = parseConfig("ios_xr_banner");
-    assertThat(
-        c.getVendorFamily().getCisco().getBanners(),
-        equalTo(
-            ImmutableMap.of(
-                "exec",
-                "First line.\nSecond line, with no ignored text.",
-                "login",
-                "First line.\nSecond line.")));
-  }
-
-  @Test
-  public void testIosPrefixSet() throws IOException {
-    String hostname = "ios-prefix-set";
-    String filename = "configs/" + hostname;
-    Configuration c = parseConfig(hostname);
-    Batfish batfish = getBatfishForConfigurationNames(hostname);
-    ConvertConfigurationAnswerElement ccae =
-        batfish.loadConvertConfigurationAnswerElementOrReparse();
-
-    Prefix permittedPrefix = Prefix.parse("1.2.3.4/30");
-    Prefix6 permittedPrefix6 = Prefix6.parse("2001::ffff:0/124");
-    Prefix rejectedPrefix = Prefix.parse("1.2.4.4/30");
-    Prefix6 rejectedPrefix6 = Prefix6.parse("2001::fffe:0/124");
-
-    /*
-     * pre_combo should be the only prefix set without a referrer
-     */
-    assertThat(ccae, hasNumReferrers(filename, PREFIX_SET, "pre_ipv4", 1));
-    assertThat(ccae, hasNumReferrers(filename, PREFIX_SET, "pre_ipv6", 1));
-    assertThat(ccae, hasNumReferrers(filename, PREFIX_SET, "pre_combo", 0));
-
-    /*
-     * pre_undef should be the only undefined reference
-     */
-    assertThat(ccae, not(hasUndefinedReference(filename, PREFIX_SET, "pre_ipv4")));
-    assertThat(ccae, not(hasUndefinedReference(filename, PREFIX_SET, "pre_ipv6")));
-    assertThat(ccae, hasUndefinedReference(filename, PREFIX_SET, "pre_undef"));
-
-    /*
-     * Confirm the generated route filter lists permit correct prefixes and do not permit others
-     */
-    assertThat(c, hasRouteFilterList("pre_ipv4", permits(permittedPrefix)));
-    assertThat(c, hasRouteFilterList("pre_ipv4", not(permits(rejectedPrefix))));
-    assertThat(c, hasRoute6FilterList("pre_ipv6", permits(permittedPrefix6)));
-    assertThat(c, hasRoute6FilterList("pre_ipv6", not(permits(rejectedPrefix6))));
-    assertThat(c, hasRouteFilterList("pre_combo", permits(permittedPrefix)));
-    assertThat(c, hasRouteFilterList("pre_combo", not(permits(rejectedPrefix))));
-    assertThat(c, hasRoute6FilterList("pre_combo", permits(permittedPrefix6)));
-    assertThat(c, hasRoute6FilterList("pre_combo", not(permits(rejectedPrefix6))));
-  }
-
-  @Test
-  public void testIosXrPrefixSet() throws IOException {
-    String hostname = "ios-xr-prefix-set";
-    Configuration c = parseConfig(hostname);
-    assertThat(c, hasConfigurationFormat(ConfigurationFormat.CISCO_IOS_XR));
-
-    Prefix permittedPrefix = Prefix.parse("1.2.3.4/32");
-    Prefix permittedPrefix2 = Prefix.parse("1.2.3.5/32");
-    Prefix rejectedPrefix = Prefix.parse("2.0.0.0/8");
-
-    StaticRoute permittedRoute =
-        StaticRoute.builder().setAdministrativeCost(1).setNetwork(permittedPrefix).build();
-    StaticRoute permittedRoute2 =
-        StaticRoute.builder().setAdministrativeCost(1).setNetwork(permittedPrefix2).build();
-    StaticRoute rejectedRoute =
-        StaticRoute.builder().setAdministrativeCost(1).setNetwork(rejectedPrefix).build();
-
-    // The route-policy accepts and rejects the same prefixes.
-    RoutingPolicy rp = c.getRoutingPolicies().get("rp_ip");
-    assertThat(rp, notNullValue());
-    assertTrue(rp.process(permittedRoute, Bgpv4Route.builder(), Direction.OUT));
-    assertTrue(rp.process(permittedRoute2, Bgpv4Route.builder(), Direction.OUT));
-    assertFalse(rp.process(rejectedRoute, Bgpv4Route.builder(), Direction.OUT));
-
-    // The BGP peer export policy also accepts and rejects the same prefixes.
-    BgpActivePeerConfig bgpCfg =
-        c.getDefaultVrf().getBgpProcess().getActiveNeighbors().get(Prefix.parse("10.1.1.1/32"));
-    assertThat(bgpCfg, notNullValue());
-    RoutingPolicy bgpRpOut =
-        c.getRoutingPolicies().get(bgpCfg.getIpv4UnicastAddressFamily().getExportPolicy());
-    assertThat(bgpRpOut, notNullValue());
-
-    assertTrue(bgpRpOut.process(permittedRoute, Bgpv4Route.builder(), Direction.OUT));
-    assertTrue(bgpRpOut.process(permittedRoute2, Bgpv4Route.builder(), Direction.OUT));
-    assertFalse(bgpRpOut.process(rejectedRoute, Bgpv4Route.builder(), Direction.OUT));
-  }
-
-  @Test
   public void testIosProxyArp() throws IOException {
     Configuration proxyArpOmitted = parseConfig("iosProxyArp");
     assertThat(proxyArpOmitted, hasInterfaces(hasEntry(equalTo("Ethernet0/0"), isProxyArp())));
@@ -3611,273 +3538,6 @@ public final class CiscoGrammarTest {
   }
 
   @Test
-  public void testIosXrCommunitySet() throws IOException {
-    Configuration c = parseConfig("ios-xr-community-set");
-    CommunityContext ctx = CommunityContext.builder().build();
-
-    // Test CommunityMatchExprs
-    assertThat(c.getCommunityMatchExprs(), hasKeys("universe", "mixed"));
-    {
-      CommunityMatchExpr expr = c.getCommunityMatchExprs().get("universe");
-      assertTrue(expr.accept(ctx.getCommunityMatchExprEvaluator(), StandardCommunity.of(1L)));
-    }
-    {
-      CommunityMatchExpr expr = c.getCommunityMatchExprs().get("mixed");
-      assertTrue(expr.accept(ctx.getCommunityMatchExprEvaluator(), StandardCommunity.of(1234, 1)));
-      assertTrue(expr.accept(ctx.getCommunityMatchExprEvaluator(), StandardCommunity.of(1, 2)));
-      assertTrue(expr.accept(ctx.getCommunityMatchExprEvaluator(), StandardCommunity.of(2, 3)));
-      assertTrue(expr.accept(ctx.getCommunityMatchExprEvaluator(), StandardCommunity.of(4, 5)));
-      assertFalse(expr.accept(ctx.getCommunityMatchExprEvaluator(), StandardCommunity.of(6, 99)));
-      assertTrue(expr.accept(ctx.getCommunityMatchExprEvaluator(), StandardCommunity.of(6, 100)));
-      assertTrue(expr.accept(ctx.getCommunityMatchExprEvaluator(), StandardCommunity.of(6, 101)));
-      assertTrue(expr.accept(ctx.getCommunityMatchExprEvaluator(), StandardCommunity.of(6, 102)));
-      assertTrue(expr.accept(ctx.getCommunityMatchExprEvaluator(), StandardCommunity.of(6, 103)));
-      assertFalse(expr.accept(ctx.getCommunityMatchExprEvaluator(), StandardCommunity.of(6, 104)));
-    }
-
-    // Test CommunitySetExprs
-    assertThat(c.getCommunitySetExprs(), hasKeys("universe", "mixed"));
-    {
-      CommunitySetExpr expr = c.getCommunitySetExprs().get("universe");
-      assertThat(
-          expr.accept(CommunitySetExprEvaluator.instance(), ctx), equalTo(CommunitySet.empty()));
-    }
-    {
-      CommunitySetExpr expr = c.getCommunitySetExprs().get("mixed");
-      assertThat(
-          expr.accept(CommunitySetExprEvaluator.instance(), ctx),
-          equalTo(CommunitySet.of(StandardCommunity.of(1, 2))));
-    }
-
-    // Test CommunitySetMatchExprs
-    assertThat(
-        c.getCommunitySetMatchExprs(),
-        hasKeys(
-            computeCommunitySetMatchAnyName("universe"),
-            computeCommunitySetMatchEveryName("universe"),
-            computeCommunitySetMatchAnyName("mixed"),
-            computeCommunitySetMatchEveryName("mixed")));
-    {
-      CommunitySetMatchExpr expr =
-          c.getCommunitySetMatchExprs().get(computeCommunitySetMatchAnyName("universe"));
-      assertTrue(
-          expr.accept(
-              ctx.getCommunitySetMatchExprEvaluator(),
-              CommunitySet.of(StandardCommunity.of(5, 5), StandardCommunity.of(7, 7))));
-    }
-    {
-      CommunitySetMatchExpr expr =
-          c.getCommunitySetMatchExprs().get(computeCommunitySetMatchEveryName("universe"));
-      assertTrue(
-          expr.accept(
-              ctx.getCommunitySetMatchExprEvaluator(),
-              CommunitySet.of(StandardCommunity.of(5, 5), StandardCommunity.of(7, 7))));
-    }
-    {
-      CommunitySetMatchExpr expr =
-          c.getCommunitySetMatchExprs().get(computeCommunitySetMatchAnyName("mixed"));
-      assertTrue(
-          expr.accept(
-              ctx.getCommunitySetMatchExprEvaluator(),
-              CommunitySet.of(StandardCommunity.of(1234, 1))));
-      assertTrue(
-          expr.accept(
-              ctx.getCommunitySetMatchExprEvaluator(),
-              CommunitySet.of(StandardCommunity.of(1, 2))));
-      assertTrue(
-          expr.accept(
-              ctx.getCommunitySetMatchExprEvaluator(),
-              CommunitySet.of(StandardCommunity.of(2, 3))));
-      assertTrue(
-          expr.accept(
-              ctx.getCommunitySetMatchExprEvaluator(),
-              CommunitySet.of(StandardCommunity.of(4, 5))));
-      assertTrue(
-          expr.accept(
-              ctx.getCommunitySetMatchExprEvaluator(),
-              CommunitySet.of(StandardCommunity.of(6, 100))));
-    }
-    {
-      CommunitySetMatchExpr expr =
-          c.getCommunitySetMatchExprs().get(computeCommunitySetMatchEveryName("mixed"));
-      assertFalse(
-          expr.accept(
-              ctx.getCommunitySetMatchExprEvaluator(),
-              CommunitySet.of(StandardCommunity.of(1234, 1))));
-      assertFalse(
-          expr.accept(
-              ctx.getCommunitySetMatchExprEvaluator(),
-              CommunitySet.of(StandardCommunity.of(1, 2))));
-      assertFalse(
-          expr.accept(
-              ctx.getCommunitySetMatchExprEvaluator(),
-              CommunitySet.of(StandardCommunity.of(2, 3))));
-      assertFalse(
-          expr.accept(
-              ctx.getCommunitySetMatchExprEvaluator(),
-              CommunitySet.of(StandardCommunity.of(4, 5))));
-      assertFalse(
-          expr.accept(
-              ctx.getCommunitySetMatchExprEvaluator(),
-              CommunitySet.of(StandardCommunity.of(6, 100))));
-      assertTrue(
-          expr.accept(
-              ctx.getCommunitySetMatchExprEvaluator(),
-              CommunitySet.of(
-                  StandardCommunity.of(1234, 1),
-                  StandardCommunity.of(1, 2),
-                  StandardCommunity.of(2, 3),
-                  StandardCommunity.of(4, 5),
-                  StandardCommunity.of(6, 100))));
-    }
-
-    // Test route-policy match and set
-    assertThat(
-        c.getRoutingPolicies(),
-        hasKeys(
-            "any",
-            "every",
-            "setmixed",
-            "setmixedadditive",
-            "deleteall",
-            "deletein",
-            "deleteininline",
-            "deletenotin"));
-    Ip origNextHopIp = Ip.parse("192.0.2.254");
-    Bgpv4Route base =
-        Bgpv4Route.builder()
-            .setAsPath(AsPath.ofSingletonAsSets(2L))
-            .setOriginatorIp(Ip.ZERO)
-            .setOriginType(OriginType.INCOMPLETE)
-            .setProtocol(RoutingProtocol.BGP)
-            .setNextHopIp(origNextHopIp)
-            .setNetwork(Prefix.ZERO)
-            .setTag(0L)
-            .build();
-    {
-      RoutingPolicy rp = c.getRoutingPolicies().get("any");
-      assertRoutingPolicyDeniesRoute(rp, base);
-      Bgpv4Route routeOneMatchingCommunity =
-          base.toBuilder().setCommunities(ImmutableSet.of(StandardCommunity.of(3, 3))).build();
-      assertRoutingPolicyPermitsRoute(rp, routeOneMatchingCommunity);
-      Bgpv4Route routeNoMatchingCommunity =
-          base.toBuilder().setCommunities(ImmutableSet.of(StandardCommunity.of(9, 9))).build();
-      assertRoutingPolicyDeniesRoute(rp, routeNoMatchingCommunity);
-    }
-    {
-      RoutingPolicy rp = c.getRoutingPolicies().get("every");
-      assertRoutingPolicyDeniesRoute(rp, base);
-      Bgpv4Route routeOneMatchingCommunity =
-          base.toBuilder().setCommunities(ImmutableSet.of(StandardCommunity.of(3, 3))).build();
-      assertRoutingPolicyDeniesRoute(rp, routeOneMatchingCommunity);
-      Bgpv4Route routeAllMatchingCommunities =
-          base.toBuilder()
-              .setCommunities(
-                  ImmutableSet.of(
-                      StandardCommunity.of(1234, 1),
-                      StandardCommunity.of(1, 2),
-                      StandardCommunity.of(2, 3),
-                      StandardCommunity.of(4, 5),
-                      StandardCommunity.of(6, 100)))
-              .build();
-      assertRoutingPolicyPermitsRoute(rp, routeAllMatchingCommunities);
-    }
-    {
-      RoutingPolicy rp = c.getRoutingPolicies().get("setmixed");
-      Bgpv4Route inRoute =
-          base.toBuilder().setCommunities(ImmutableSet.of(StandardCommunity.of(9, 9))).build();
-      Bgpv4Route route = processRouteIn(rp, inRoute);
-      assertThat(route.getCommunities(), containsInAnyOrder(StandardCommunity.of(1, 2)));
-    }
-    {
-      RoutingPolicy rp = c.getRoutingPolicies().get("setmixedadditive");
-      Bgpv4Route inRoute =
-          base.toBuilder().setCommunities(ImmutableSet.of(StandardCommunity.of(9, 9))).build();
-      Bgpv4Route route = processRouteIn(rp, inRoute);
-      assertThat(
-          route.getCommunities(),
-          containsInAnyOrder(StandardCommunity.of(1, 2), StandardCommunity.of(9, 9)));
-    }
-    {
-      RoutingPolicy rp = c.getRoutingPolicies().get("deleteall");
-      Bgpv4Route inRoute =
-          base.toBuilder()
-              .setCommunities(
-                  ImmutableSet.of(
-                      StandardCommunity.of(1, 1),
-                      StandardCommunity.of(WellKnownCommunity.INTERNET)))
-              .build();
-      Bgpv4Route route = processRouteIn(rp, inRoute);
-      assertThat(
-          route.getCommunities(),
-          containsInAnyOrder(StandardCommunity.of(WellKnownCommunity.INTERNET)));
-    }
-    {
-      RoutingPolicy rp = c.getRoutingPolicies().get("deletein");
-      Bgpv4Route inRoute =
-          base.toBuilder()
-              .setCommunities(
-                  ImmutableSet.of(
-                      StandardCommunity.of(1, 1),
-                      StandardCommunity.of(WellKnownCommunity.INTERNET)))
-              .build();
-      Bgpv4Route route = processRouteIn(rp, inRoute);
-      assertThat(route.getCommunities(), empty());
-    }
-    {
-      RoutingPolicy rp = c.getRoutingPolicies().get("deleteininline");
-      Bgpv4Route inRoute =
-          base.toBuilder()
-              .setCommunities(
-                  ImmutableSet.of(
-                      StandardCommunity.of(1, 1),
-                      StandardCommunity.of(WellKnownCommunity.INTERNET)))
-              .build();
-      Bgpv4Route route = processRouteIn(rp, inRoute);
-      assertThat(route.getCommunities(), empty());
-    }
-    {
-      RoutingPolicy rp = c.getRoutingPolicies().get("deletenotin");
-      Bgpv4Route inRoute =
-          base.toBuilder()
-              .setCommunities(
-                  ImmutableSet.of(
-                      StandardCommunity.of(1, 1),
-                      StandardCommunity.of(WellKnownCommunity.INTERNET)))
-              .build();
-      Bgpv4Route route = processRouteIn(rp, inRoute);
-      assertThat(
-          route.getCommunities(),
-          containsInAnyOrder(
-              StandardCommunity.of(1, 1), StandardCommunity.of(WellKnownCommunity.INTERNET)));
-    }
-  }
-
-  @Test
-  public void testIosXrOspfInterface() throws IOException {
-    Configuration c = parseConfig("ios-xr-ospf-interface");
-    String ifaceName = "Bundle-Ethernet201";
-    Map<String, Interface> ifaces = c.getAllInterfaces();
-    assertThat(ifaces.keySet(), contains(ifaceName));
-
-    // Confirm the interface has the correct OSPF process and area
-    assertThat(ifaces.get(ifaceName).getOspfProcess(), equalTo("2"));
-    assertThat(ifaces.get(ifaceName).getOspfAreaName(), equalTo(0L));
-  }
-
-  @Test
-  public void testIosXrOspfReferenceBandwidth() throws IOException {
-    Configuration manual = parseConfig("iosxrOspfCost");
-    assertThat(
-        manual.getDefaultVrf().getOspfProcesses().get("1").getReferenceBandwidth(), equalTo(10e6d));
-
-    Configuration defaults = parseConfig("iosxrOspfCostDefaults");
-    assertThat(
-        defaults.getDefaultVrf().getOspfProcesses().get("1").getReferenceBandwidth(),
-        equalTo(getReferenceOspfBandwidth(ConfigurationFormat.CISCO_IOS_XR)));
-  }
-
-  @Test
   public void testBgpLocalAs() throws IOException {
     String testrigName = "bgp-local-as";
     List<String> configurationNames = ImmutableList.of("r1", "r2");
@@ -3955,6 +3615,33 @@ public final class CiscoGrammarTest {
               .getLocalAs(),
           equalTo(4123456789L));
     }
+  }
+
+  @Test
+  public void testBgpMultipleRouters() throws IOException {
+    parseConfig("ios-bgp-multiple-routers");
+    // Don't crash.
+  }
+
+  /** Tests that we can append more BGP config at the bottom of a file. */
+  @Test
+  public void testBgpReentrantVrf() throws IOException {
+    CiscoConfiguration c = parseCiscoConfig("ios-bgp-reentrant-vrf", ConfigurationFormat.CISCO_IOS);
+    // Simple test that default VRF was parsed
+    org.batfish.representation.cisco.BgpProcess defBgp = c.getDefaultVrf().getBgpProcess();
+    assertThat(defBgp.getProcnum(), equalTo(1L));
+
+    // VRF keeps local-as from first declaration and overriden router-id from second.
+    assertThat(c.getVrfs(), hasKey("a"));
+    org.batfish.representation.cisco.BgpProcess vrfBgp = c.getVrfs().get("a").getBgpProcess();
+    assertThat(vrfBgp.getMasterBgpPeerGroup().getLocalAs(), equalTo(5L));
+    assertThat(vrfBgp.getRouterId(), equalTo(Ip.parse("1.2.3.5")));
+  }
+
+  @Test
+  public void testBgpUndeclaredPeer() throws IOException {
+    parseConfig("ios-bgp-undeclared-peer");
+    // Don't crash.
   }
 
   @Test
@@ -5166,7 +4853,12 @@ public final class CiscoGrammarTest {
   }
 
   private Configuration parseConfig(String hostname) throws IOException {
-    return parseTextConfigs(hostname).get(hostname.toLowerCase());
+    Map<String, Configuration> configs = parseTextConfigs(hostname);
+    assertThat(configs, hasKey(hostname.toLowerCase()));
+    Configuration c = configs.get(hostname.toLowerCase());
+    // Ensure that we used the Cisco parser.
+    assertThat(c.getVendorFamily().getCisco(), notNullValue());
+    return c;
   }
 
   private Map<String, Configuration> parseTextConfigs(String... configurationNames)
@@ -5792,7 +5484,7 @@ public final class CiscoGrammarTest {
     // Confirm static route is extracted properly
     assertThat(
         c,
-        ConfigurationMatchers.hasVrf(
+        hasVrf(
             "default",
             hasStaticRoutes(
                 equalTo(

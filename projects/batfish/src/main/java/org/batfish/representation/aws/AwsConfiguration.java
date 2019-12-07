@@ -4,33 +4,34 @@ import static org.batfish.representation.aws.InternetGateway.BACKBONE_INTERFACE_
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.collect.ImmutableList;
-import java.io.IOException;
-import java.io.Serializable;
+import com.google.common.collect.ImmutableSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.Set;
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import javax.annotation.ParametersAreNonnullByDefault;
-import org.batfish.common.Warnings;
-import org.batfish.config.Settings;
+import org.batfish.common.BfConsts;
+import org.batfish.common.VendorConversionException;
+import org.batfish.common.topology.Layer1Edge;
 import org.batfish.datamodel.Configuration;
-import org.batfish.datamodel.GenericConfigObject;
+import org.batfish.datamodel.ConfigurationFormat;
 import org.batfish.datamodel.Ip;
-import org.batfish.datamodel.Prefix;
 import org.batfish.datamodel.answers.ParseVendorConfigurationAnswerElement;
 import org.batfish.datamodel.collections.NodeInterfacePair;
 import org.batfish.datamodel.isp_configuration.BorderInterfaceInfo;
+import org.batfish.vendor.VendorConfiguration;
 
 /** The top-level class that represent AWS configuration */
 @ParametersAreNonnullByDefault
-public class AwsConfiguration implements Serializable, GenericConfigObject {
+public class AwsConfiguration extends VendorConfiguration {
 
-  private static final long INITIAL_GENERATED_IP = Ip.FIRST_CLASS_E_EXPERIMENTAL_IP.asLong();
+  static Ip LINK_LOCAL_IP1 = Ip.parse("169.254.0.1");
 
-  @Nonnull private final Map<String, Configuration> _configurationNodes;
+  static Ip LINK_LOCAL_IP2 = Ip.parse("169.254.0.2");
 
-  @Nonnull private final AtomicLong _currentGeneratedIpAsLong;
+  @Nullable private ConvertedConfiguration _convertedConfiguration;
 
   @Nonnull private final Map<String, Region> _regions;
 
@@ -39,21 +40,7 @@ public class AwsConfiguration implements Serializable, GenericConfigObject {
   }
 
   public AwsConfiguration(Map<String, Region> regions) {
-    this(regions, new HashMap<>(), new AtomicLong(INITIAL_GENERATED_IP));
-  }
-
-  public AwsConfiguration(
-      Map<String, Region> regions, Map<String, Configuration> configurationNodes) {
-    this(regions, configurationNodes, new AtomicLong(INITIAL_GENERATED_IP));
-  }
-
-  public AwsConfiguration(
-      Map<String, Region> regions,
-      Map<String, Configuration> configurationNodes,
-      AtomicLong currentGeneratedIpAsLong) {
     _regions = regions;
-    _configurationNodes = configurationNodes;
-    _currentGeneratedIpAsLong = currentGeneratedIpAsLong;
   }
 
   /** Adds a config subtree */
@@ -61,35 +48,38 @@ public class AwsConfiguration implements Serializable, GenericConfigObject {
       String region,
       JsonNode json,
       String sourceFileName,
-      ParseVendorConfigurationAnswerElement pvcae)
-      throws IOException {
+      ParseVendorConfigurationAnswerElement pvcae) {
     _regions
         .computeIfAbsent(region, r -> new Region(region))
         .addConfigElement(json, sourceFileName, pvcae);
   }
 
+  /**
+   * Convert this AWS config to a set of VI configurations
+   *
+   * <p>TODO: Populate all the structure names that appear in these configs
+   */
   @Nonnull
-  Map<String, Configuration> getConfigurationNodes() {
-    return _configurationNodes;
-  }
-
-  @Nonnull
-  Prefix getNextGeneratedLinkSubnet() {
-    long base = _currentGeneratedIpAsLong.getAndAdd(2L);
-    assert base % 2 == 0;
-    return Prefix.create(Ip.create(base), Prefix.MAX_PREFIX_LENGTH - 1);
-  }
-
-  /** Convert this AWS config to a set of VI configurations */
-  @Nonnull
-  public Map<String, Configuration> toConfigurations(
-      Settings settings, Map<String, Warnings> warningsByHost) {
-
-    for (Region region : _regions.values()) {
-      region.toConfigurationNodes(this, _configurationNodes, settings, warningsByHost);
+  @Override
+  public List<Configuration> toVendorIndependentConfigurations() throws VendorConversionException {
+    if (_convertedConfiguration == null) {
+      convertConfigurations();
     }
+    return ImmutableList.copyOf(_convertedConfiguration.getConfigurationNodes().values());
+  }
 
-    return _configurationNodes;
+  private void convertConfigurations() {
+    _convertedConfiguration = new ConvertedConfiguration();
+    for (Region region : _regions.values()) {
+      region.toConfigurationNodes(_convertedConfiguration, getWarnings());
+    }
+    // We do this de-duplication because cross-region connections will show up in both regions
+    Set<VpcPeeringConnection> vpcPeeringConnections =
+        _regions.values().stream()
+            .flatMap(r -> r.getVpcPeeringConnections().values().stream())
+            .collect(ImmutableSet.toImmutableSet());
+    vpcPeeringConnections.forEach(
+        c -> c.createConnection(_regions, _convertedConfiguration, getWarnings()));
   }
 
   @Override
@@ -100,5 +90,48 @@ public class AwsConfiguration implements Serializable, GenericConfigObject {
         .map(igw -> NodeInterfacePair.of(igw.getId(), BACKBONE_INTERFACE_NAME))
         .map(BorderInterfaceInfo::new)
         .collect(ImmutableList.toImmutableList());
+  }
+
+  @Override
+  public String getFilename() {
+    // not a real file name but a folder
+    return BfConsts.RELPATH_AWS_CONFIGS_FILE;
+  }
+
+  @Override
+  public String getHostname() {
+    // This hostname does not appear in the vendor independent configs that are returned
+    return BfConsts.RELPATH_AWS_CONFIGS_FILE;
+  }
+
+  @Override
+  @Nonnull
+  public Set<Layer1Edge> getLayer1Edges() {
+    if (_convertedConfiguration == null) {
+      convertConfigurations();
+    }
+    return _convertedConfiguration.getLayer1Edges();
+  }
+
+  @Override
+  public void setHostname(String hostname) {
+    throw new IllegalStateException("Setting the hostname is not allowed for AWS configs");
+  }
+
+  @Override
+  public void setVendor(ConfigurationFormat format) {
+    throw new IllegalStateException("Setting the format is not allowed for AWS configs");
+  }
+
+  public static String vpnExternalInterfaceName(String tunnelId) {
+    return "external-" + tunnelId;
+  }
+
+  public static String vpnTunnelId(String vpnConnectionId, int idNum) {
+    return String.format("%s-%s", vpnConnectionId, idNum);
+  }
+
+  public static String vpnInterfaceName(String tunnelId) {
+    return "vpn-" + tunnelId;
   }
 }

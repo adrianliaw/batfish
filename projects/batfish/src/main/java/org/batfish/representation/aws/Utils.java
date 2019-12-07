@@ -1,23 +1,34 @@
 package org.batfish.representation.aws;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static org.batfish.representation.aws.AwsConfiguration.LINK_LOCAL_IP1;
+import static org.batfish.representation.aws.AwsConfiguration.LINK_LOCAL_IP2;
 
+import com.google.common.collect.ImmutableList;
 import java.util.List;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.ParametersAreNonnullByDefault;
 import org.batfish.common.BatfishException;
 import org.batfish.common.Warnings;
-import org.batfish.datamodel.ConcreteInterfaceAddress;
 import org.batfish.datamodel.Configuration;
 import org.batfish.datamodel.ConfigurationFormat;
 import org.batfish.datamodel.Interface;
+import org.batfish.datamodel.InterfaceAddress;
 import org.batfish.datamodel.Ip;
 import org.batfish.datamodel.IpProtocol;
 import org.batfish.datamodel.LineAction;
+import org.batfish.datamodel.LinkLocalAddress;
 import org.batfish.datamodel.NetworkFactory;
 import org.batfish.datamodel.Prefix;
+import org.batfish.datamodel.RoutingProtocol;
 import org.batfish.datamodel.StaticRoute;
+import org.batfish.datamodel.Vrf;
+import org.batfish.datamodel.routing_policy.expr.Disjunction;
+import org.batfish.datamodel.routing_policy.expr.MatchProtocol;
+import org.batfish.datamodel.routing_policy.statement.If;
+import org.batfish.datamodel.routing_policy.statement.Statement;
+import org.batfish.datamodel.routing_policy.statement.Statements;
 import org.batfish.datamodel.vendor_family.AwsFamily;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
@@ -27,6 +38,19 @@ import org.w3c.dom.NodeList;
 final class Utils {
 
   private static final NetworkFactory FACTORY = new NetworkFactory();
+
+  static final Statement ACCEPT_ALL_BGP =
+      new If(
+          new MatchProtocol(RoutingProtocol.BGP),
+          ImmutableList.of(Statements.ExitAccept.toStaticStatement()),
+          ImmutableList.of(Statements.ExitReject.toStaticStatement()));
+
+  static final Statement ACCEPT_ALL_BGP_AND_STATIC =
+      new If(
+          new Disjunction(
+              new MatchProtocol(RoutingProtocol.BGP), new MatchProtocol(RoutingProtocol.STATIC)),
+          ImmutableList.of(Statements.ExitAccept.toStaticStatement()),
+          ImmutableList.of(Statements.ExitReject.toStaticStatement()));
 
   static void checkNonNull(@Nullable Object value, String fieldName, String objectType) {
     if (value == null) {
@@ -50,13 +74,29 @@ final class Utils {
     return c;
   }
 
+  /** Creates a new interface on {@code c} with the provided name, address, and description. */
   static Interface newInterface(
-      String name, Configuration c, ConcreteInterfaceAddress primaryAddress, String description) {
+      String name, Configuration c, InterfaceAddress primaryAddress, String description) {
+    return newInterface(name, c, c.getDefaultVrf().getName(), primaryAddress, description);
+  }
+
+  /**
+   * Creates a new interface on {@code c} in the provided VRF name with the provided name, address,
+   * and description.
+   */
+  static Interface newInterface(
+      String name,
+      Configuration c,
+      String vrfName,
+      InterfaceAddress primaryAddress,
+      String description) {
+    checkArgument(
+        c.getVrfs().containsKey(vrfName), "VRF %s does not exist on %s", vrfName, c.getHostname());
     return FACTORY
         .interfaceBuilder()
         .setName(name)
         .setOwner(c)
-        .setVrf(c.getDefaultVrf())
+        .setVrf(c.getVrfs().get(vrfName))
         .setAddress(primaryAddress)
         .setDescription(description)
         .build();
@@ -122,9 +162,9 @@ final class Utils {
     cfgNode.getDefaultVrf().getStaticRoutes().add(staticRoute);
   }
 
-  @Nonnull
-  static StaticRoute toStaticRoute(Ip targetIp, Ip nextHopIp) {
-    return toStaticRoute(targetIp.toPrefix(), nextHopIp);
+  /** Adds a static route on {@code vrf} */
+  static void addStaticRoute(Vrf vrf, StaticRoute staticRoute) {
+    vrf.getStaticRoutes().add(staticRoute);
   }
 
   @Nonnull
@@ -138,16 +178,6 @@ final class Utils {
   }
 
   @Nonnull
-  static StaticRoute toStaticRoute(Ip targetIp, Interface nextHopInterface) {
-    return toStaticRoute(targetIp.toPrefix(), nextHopInterface);
-  }
-
-  @Nonnull
-  static StaticRoute toStaticRoute(Prefix targetPrefix, Interface nextHopInterface) {
-    return toStaticRoute(targetPrefix, nextHopInterface.getName());
-  }
-
-  @Nonnull
   static StaticRoute toStaticRoute(Prefix targetPrefix, String nextHopInterfaceName) {
     return StaticRoute.builder()
         .setNetwork(targetPrefix)
@@ -157,24 +187,85 @@ final class Utils {
         .build();
   }
 
+  @Nonnull
+  static StaticRoute toStaticRoute(Prefix targetPrefix, String nextHopInterfaceName, Ip nextHopIp) {
+    return StaticRoute.builder()
+        .setNetwork(targetPrefix)
+        .setNextHopInterface(nextHopInterfaceName)
+        .setNextHopIp(nextHopIp)
+        .setAdministrativeCost(Route.DEFAULT_STATIC_ROUTE_ADMIN)
+        .setMetric(Route.DEFAULT_STATIC_ROUTE_COST)
+        .build();
+  }
+
+  /**
+   * Creates a subnet link between the two nodes represented by {@code cfgNode1} and {@code
+   * cfgNode2}. Create a new interface on each node in the supplied VRF names and assigns it a name
+   * that corresponds to the name of the other node plus {@code ifaceNameSuffix}
+   */
+  static void connect(
+      ConvertedConfiguration awsConfiguration,
+      Configuration cfgNode1,
+      String vrfName1,
+      Configuration cfgNode2,
+      String vrfName2,
+      String ifaceNameSuffix) {
+    String ifaceName1 = interfaceNameToRemote(cfgNode2, ifaceNameSuffix);
+    Utils.newInterface(
+        ifaceName1, cfgNode1, vrfName1, LinkLocalAddress.of(LINK_LOCAL_IP1), "To " + ifaceName1);
+
+    String ifaceName2 = interfaceNameToRemote(cfgNode1, ifaceNameSuffix);
+    Utils.newInterface(
+        ifaceName2, cfgNode2, vrfName2, LinkLocalAddress.of(LINK_LOCAL_IP2), "To " + ifaceName2);
+
+    addLayer1Edge(
+        awsConfiguration, cfgNode1.getHostname(), ifaceName1, cfgNode2.getHostname(), ifaceName2);
+  }
+
   /**
    * Creates a subnet link between the two nodes represented by {@code cfgNode1} and {@code
    * cfgNode2}. Create a new interface on each node for this purpose and assigns it a name that
-   * corresponds to the name of the other node
+   * corresponds to the name of the other node.
    */
   static void connect(
-      AwsConfiguration awsConfiguration, Configuration cfgNode1, Configuration cfgNode2) {
-    Prefix linkPrefix = awsConfiguration.getNextGeneratedLinkSubnet();
-    ConcreteInterfaceAddress ifaceAddress1 =
-        ConcreteInterfaceAddress.create(linkPrefix.getStartIp(), linkPrefix.getPrefixLength());
-    ConcreteInterfaceAddress ifaceAddress2 =
-        ConcreteInterfaceAddress.create(linkPrefix.getEndIp(), linkPrefix.getPrefixLength());
+      ConvertedConfiguration awsConfiguration, Configuration cfgNode1, Configuration cfgNode2) {
+    connect(
+        awsConfiguration,
+        cfgNode1,
+        cfgNode1.getDefaultVrf().getName(),
+        cfgNode2,
+        cfgNode2.getDefaultVrf().getName(),
+        "");
+  }
 
-    String ifaceName1 = cfgNode2.getHostname();
-    Utils.newInterface(ifaceName1, cfgNode1, ifaceAddress1, "To " + ifaceName1);
+  static String interfaceNameToRemote(Configuration remoteCfg) {
+    return interfaceNameToRemote(remoteCfg, "");
+  }
 
-    String ifaceName2 = cfgNode1.getHostname();
-    Utils.newInterface(ifaceName2, cfgNode2, ifaceAddress2, "To " + ifaceName2);
+  static String interfaceNameToRemote(Configuration remoteCfg, String suffix) {
+    return suffix.isEmpty() ? remoteCfg.getHostname() : remoteCfg.getHostname() + "-" + suffix;
+  }
+
+  /** Adds a bidirectional layer1 edge between the interfaces and nodes */
+  static void addLayer1Edge(
+      ConvertedConfiguration awsConfiguration,
+      String node1,
+      String iface1,
+      String node2,
+      String iface2) {
+    awsConfiguration.addEdge(node1, iface1, node2, iface2);
+    awsConfiguration.addEdge(node2, iface2, node1, iface1);
+  }
+
+  private static InterfaceAddress getInterfaceAddress(
+      Configuration configuration, String ifaceName) {
+    Interface iface = configuration.getAllInterfaces().get(ifaceName);
+    checkArgument(
+        iface != null,
+        "Interface name '%s' not found on node %s",
+        ifaceName,
+        configuration.getHostname());
+    return iface.getAddress();
   }
 
   /**
@@ -182,20 +273,15 @@ final class Utils {
    * Throws an exception if the interface is not present or does not have an assigned address
    */
   @Nonnull
-  static Ip getInterfaceIp(Configuration configuration, String ifaceName) {
-    Interface iface = configuration.getAllInterfaces().get(ifaceName);
-    checkArgument(
-        iface != null,
-        "Interface name '%s' not found on node %s",
-        ifaceName,
-        configuration.getHostname());
-    checkArgument(
-        iface.getConcreteAddress() != null,
-        "Concrete address for interface name '%s' on node %s is null",
-        ifaceName,
-        configuration);
-
-    return iface.getConcreteAddress().getIp();
+  static Ip getInterfaceLinkLocalIp(Configuration configuration, String ifaceName) {
+    InterfaceAddress ifaceAddress = getInterfaceAddress(configuration, ifaceName);
+    if (ifaceAddress instanceof LinkLocalAddress) {
+      return ((LinkLocalAddress) ifaceAddress).getIp();
+    }
+    throw new IllegalArgumentException(
+        String.format(
+            "Interface %s on %s does not have a link local address",
+            ifaceName, configuration.getHostname()));
   }
 
   /** Extracts the text content of the first element with {@code tag} within {@code element}. */

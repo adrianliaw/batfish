@@ -15,6 +15,9 @@ import static org.batfish.datamodel.matchers.IpsecPeerConfigMatchers.hasLocalAdd
 import static org.batfish.datamodel.matchers.IpsecPeerConfigMatchers.hasSourceInterface;
 import static org.batfish.datamodel.matchers.IpsecPeerConfigMatchers.hasTunnelInterface;
 import static org.batfish.datamodel.matchers.IpsecPeerConfigMatchers.isIpsecStaticPeerConfigThat;
+import static org.batfish.representation.aws.AwsConfiguration.vpnExternalInterfaceName;
+import static org.batfish.representation.aws.AwsConfiguration.vpnInterfaceName;
+import static org.batfish.representation.aws.AwsConfiguration.vpnTunnelId;
 import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasKey;
@@ -47,9 +50,10 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+/** Tests of an AWS network with IPsec peering to a Cisco router on-prem. */
 public class AwsIpsecTest {
 
-  private static String TESTRIG_PREFIX = "org/batfish/grammar/host/testrigs/";
+  private static final String TESTRIG_PREFIX = "org/batfish/grammar/aws/testrigs/";
 
   @Rule public TemporaryFolder _folder = new TemporaryFolder();
 
@@ -101,7 +105,7 @@ public class AwsIpsecTest {
                     IkePhase1KeyMatchers.hasKeyHash(
                         CommonUtil.sha256Digest("abcdefghijklmnop" + CommonUtil.salt()))),
                 hasRemoteIdentity(containsIp(Ip.parse("4.4.4.27"))),
-                hasLocalInterface(equalTo("external1")),
+                hasLocalInterface(equalTo("external-vpn-ba2e34a8-1")),
                 hasIkePhase1Proposals(equalTo(ImmutableList.of("vpn-ba2e34a8-1"))))));
 
     // test for IKE phase1 proposals
@@ -160,8 +164,9 @@ public class AwsIpsecTest {
                     hasDestinationAddress(Ip.parse("4.4.4.27")),
                     IpsecPeerConfigMatchers.hasIkePhase1Policy("vpn-ba2e34a8-1"),
                     IpsecPeerConfigMatchers.hasIpsecPolicy("vpn-ba2e34a8-1"),
-                    hasSourceInterface("external1"),
+                    hasSourceInterface(vpnExternalInterfaceName(vpnTunnelId("vpn-ba2e34a8", 1))),
                     hasLocalAddress(Ip.parse("1.2.3.4")),
-                    hasTunnelInterface(equalTo("vpn1"))))));
+                    hasTunnelInterface(
+                        equalTo(vpnInterfaceName(vpnTunnelId("vpn-ba2e34a8", 1))))))));
   }
 }

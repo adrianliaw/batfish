@@ -47,7 +47,6 @@ import org.batfish.common.BatfishException;
 import org.batfish.datamodel.AbstractRoute;
 import org.batfish.datamodel.AbstractRouteBuilder;
 import org.batfish.datamodel.AnnotatedRoute;
-import org.batfish.datamodel.AsPath;
 import org.batfish.datamodel.BgpAdvertisement;
 import org.batfish.datamodel.BgpAdvertisement.BgpAdvertisementType;
 import org.batfish.datamodel.BgpPeerConfig;
@@ -71,7 +70,6 @@ import org.batfish.datamodel.Ip;
 import org.batfish.datamodel.IsisRoute;
 import org.batfish.datamodel.LocalRoute;
 import org.batfish.datamodel.NetworkConfigurations;
-import org.batfish.datamodel.OriginType;
 import org.batfish.datamodel.Prefix;
 import org.batfish.datamodel.RipInternalRoute;
 import org.batfish.datamodel.RipProcess;
@@ -84,7 +82,6 @@ import org.batfish.datamodel.Vrf;
 import org.batfish.datamodel.bgp.AddressFamily.Type;
 import org.batfish.datamodel.bgp.BgpTopology;
 import org.batfish.datamodel.bgp.BgpTopology.EdgeId;
-import org.batfish.datamodel.bgp.community.Community;
 import org.batfish.datamodel.dataplane.rib.RibGroup;
 import org.batfish.datamodel.dataplane.rib.RibId;
 import org.batfish.datamodel.isis.IsisEdge;
@@ -420,7 +417,7 @@ public class VirtualRouter implements Serializable {
           policyName != null ? _c.getRoutingPolicies().get(policyName) : null;
       GeneratedRoute.Builder grb =
           GeneratedRouteHelper.activateGeneratedRoute(
-              gr, generationPolicy, _mainRib.getTypedRoutes(), _vrf.getName());
+              gr, generationPolicy, _mainRib.getTypedRoutes());
 
       if (grb != null) {
         // Routes have been changed
@@ -577,35 +574,24 @@ public class VirtualRouter implements Serializable {
       int admin = _vrf.getBgpProcess().getAdminCost(targetProtocol);
 
       if (received) {
-        AsPath asPath = advert.getAsPath();
-        SortedSet<Long> clusterList = advert.getClusterList();
-        SortedSet<Community> communities = ImmutableSortedSet.copyOf(advert.getCommunities());
-        long localPreference = advert.getLocalPreference();
-        long metric = advert.getMed();
-        Prefix network = advert.getNetwork();
-        Ip nextHopIp = advert.getNextHopIp();
-        Ip originatorIp = advert.getOriginatorIp();
-        OriginType originType = advert.getOriginType();
-        RoutingProtocol srcProtocol = advert.getSrcProtocol();
-        int weight = advert.getWeight();
         Bgpv4Route.Builder builder = new Bgpv4Route.Builder();
         builder.setAdmin(admin);
-        builder.setAsPath(asPath);
-        builder.setClusterList(clusterList);
-        builder.setCommunities(communities);
-        builder.setLocalPreference(localPreference);
-        builder.setMetric(metric);
-        builder.setNetwork(network);
-        builder.setNextHopIp(nextHopIp);
-        builder.setOriginatorIp(originatorIp);
-        builder.setOriginType(originType);
+        builder.setAsPath(advert.getAsPath());
+        builder.setClusterList(advert.getClusterList());
+        builder.setCommunities(advert.getCommunities());
+        builder.setLocalPreference(advert.getLocalPreference());
+        builder.setMetric(advert.getMed());
+        builder.setNetwork(advert.getNetwork());
+        builder.setNextHopIp(advert.getNextHopIp());
+        builder.setOriginatorIp(advert.getOriginatorIp());
+        builder.setOriginType(advert.getOriginType());
         builder.setProtocol(targetProtocol);
         // TODO: support external route reflector clients
         builder.setReceivedFromIp(advert.getSrcIp());
         builder.setReceivedFromRouteReflectorClient(false);
-        builder.setSrcProtocol(srcProtocol);
+        builder.setSrcProtocol(advert.getSrcProtocol());
         // TODO: possibly support setting tag
-        builder.setWeight(weight);
+        builder.setWeight(advert.getWeight());
         Bgpv4Route route = builder.build();
         ribDeltas.get(targetRib).from(targetRib.mergeRouteGetDelta(route));
       } else {
@@ -757,6 +743,7 @@ public class VirtualRouter implements Serializable {
     }
     // first import aggregates
     switch (_c.getConfigurationFormat()) {
+      case FLAT_JUNIPER:
       case JUNIPER:
       case JUNIPER_SWITCH:
         return;
@@ -767,10 +754,16 @@ public class VirtualRouter implements Serializable {
     for (AbstractRoute grAbstract : _generatedRib.getRoutes()) {
       GeneratedRoute gr = (GeneratedRoute) grAbstract;
 
-      // Prevent route from being merged into the main RIB by marking it non-routing
       Bgpv4Route br =
           BgpProtocolHelper.convertGeneratedRouteToBgp(
-              gr, _vrf.getBgpProcess().getRouterId(), Ip.ZERO, true);
+              gr,
+              Optional.ofNullable(gr.getAttributePolicy())
+                  .map(p -> _c.getRoutingPolicies().get(p))
+                  .orElse(null),
+              _vrf.getBgpProcess().getRouterId(),
+              Ip.ZERO,
+              // Prevent route from being merged into the main RIB by marking it non-routing
+              true);
       /* TODO: tests for this */
       RibDelta<Bgpv4Route> d1 = _bgpRoutingProcess._bgpv4Rib.mergeRouteGetDelta(br);
       _bgpRoutingProcess._bgpv4DeltaBuilder.from(d1);
@@ -1195,7 +1188,7 @@ public class VirtualRouter implements Serializable {
           // Route could not be imported due to routing policy
           _prefixTracer.filtered(
               remoteRoute.getNetwork(),
-              ourConfigId.getHostname(),
+              remoteConfigId.getHostname(),
               remoteIp,
               remoteConfigId.getVrfName(),
               importPolicyName,
@@ -1432,7 +1425,7 @@ public class VirtualRouter implements Serializable {
                 adv -> {
                   Bgpv4Route bgpRoute =
                       _bgpRoutingProcess.exportNonBgpRouteToBgp(
-                          adv.getRoute(), ourConfigId, remoteConfigId, ourConfig, session);
+                          adv.getRoute(), remoteConfigId, ourConfig, session);
                   return bgpRoute == null
                       ? null
                       : RouteAdvertisement.<Bgpv4Route>builder()
@@ -1819,12 +1812,17 @@ public class VirtualRouter implements Serializable {
       @Nonnull GeneratedRoute generatedRoute, Ip nextHopIp) {
     String policyName = generatedRoute.getGenerationPolicy();
     RoutingPolicy policy = policyName != null ? _c.getRoutingPolicies().get(policyName) : null;
+    @Nullable
+    RoutingPolicy attrPolicy =
+        generatedRoute.getAttributePolicy() != null
+            ? _c.getRoutingPolicies().get(generatedRoute.getAttributePolicy())
+            : null;
     GeneratedRoute.Builder builder =
         GeneratedRouteHelper.activateGeneratedRoute(
-            generatedRoute, policy, _mainRib.getTypedRoutes(), _vrf.getName());
+            generatedRoute, policy, _mainRib.getTypedRoutes());
     return builder != null
         ? BgpProtocolHelper.convertGeneratedRouteToBgp(
-            builder.build(), _vrf.getBgpProcess().getRouterId(), nextHopIp, false)
+            builder.build(), attrPolicy, _vrf.getBgpProcess().getRouterId(), nextHopIp, false)
         : null;
   }
 

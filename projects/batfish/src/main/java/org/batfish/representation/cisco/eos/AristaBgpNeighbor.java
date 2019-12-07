@@ -15,6 +15,7 @@ public abstract class AristaBgpNeighbor implements Serializable {
 
   @Nullable private Integer _allowAsIn;
   @Nullable private Boolean _autoLocalAddr;
+  @Nullable private AristaBgpDefaultOriginate _defaultOriginate;
   @Nullable private String _description;
   @Nullable private Boolean _dontCapabilityNegotiate;
   @Nullable private Integer _ebgpMultihop;
@@ -24,6 +25,7 @@ public abstract class AristaBgpNeighbor implements Serializable {
   @Nullable private Boolean _nextHopUnchanged;
   @Nullable private Long _remoteAs;
   @Nullable private RemovePrivateAsMode _removePrivateAsMode;
+  @Nullable private Boolean _routeReflectorClient;
   @Nullable private Boolean _sendCommunity;
   @Nullable private Boolean _shutdown;
   @Nullable private String _updateSource;
@@ -45,6 +47,15 @@ public abstract class AristaBgpNeighbor implements Serializable {
 
   public void setAutoLocalAddr(@Nullable Boolean autoLocalAddr) {
     _autoLocalAddr = autoLocalAddr;
+  }
+
+  @Nullable
+  public AristaBgpDefaultOriginate getDefaultOriginate() {
+    return _defaultOriginate;
+  }
+
+  public void setDefaultOriginate(@Nullable AristaBgpDefaultOriginate defaultOriginate) {
+    _defaultOriginate = defaultOriginate;
   }
 
   @Nullable
@@ -134,6 +145,15 @@ public abstract class AristaBgpNeighbor implements Serializable {
   }
 
   @Nullable
+  public Boolean getRouteReflectorClient() {
+    return _routeReflectorClient;
+  }
+
+  public void setRouteReflectorClient(@Nullable Boolean routeReflectorClient) {
+    _routeReflectorClient = routeReflectorClient;
+  }
+
+  @Nullable
   public Boolean getSendCommunity() {
     return _sendCommunity;
   }
@@ -172,6 +192,9 @@ public abstract class AristaBgpNeighbor implements Serializable {
       _autoLocalAddr = other._autoLocalAddr;
     }
     // do not inherit description
+    if (_defaultOriginate == null) {
+      _defaultOriginate = other._defaultOriginate;
+    }
     if (_dontCapabilityNegotiate == null) {
       _dontCapabilityNegotiate = other._dontCapabilityNegotiate;
     }
@@ -195,6 +218,9 @@ public abstract class AristaBgpNeighbor implements Serializable {
     }
     if (_removePrivateAsMode == null) {
       _removePrivateAsMode = other._removePrivateAsMode;
+    }
+    if (_routeReflectorClient == null) {
+      _routeReflectorClient = other._routeReflectorClient;
     }
     if (_sendCommunity == null) {
       _sendCommunity = other._sendCommunity;

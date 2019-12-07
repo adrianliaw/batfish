@@ -1,7 +1,6 @@
 package org.batfish.representation.cisco;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
-import static java.util.Collections.singletonList;
 import static org.batfish.datamodel.Names.generatedBgpCommonExportPolicyName;
 import static org.batfish.datamodel.Names.generatedBgpDefaultRouteExportPolicyName;
 import static org.batfish.datamodel.Names.generatedBgpPeerEvpnExportPolicyName;
@@ -155,6 +154,7 @@ final class AristaConversions {
     // No remote AS set.
     if (neighbor.getRemoteAs() == null) {
       w.redFlag("No remote-as configured for " + name);
+      return false;
     }
 
     return true;
@@ -185,6 +185,7 @@ final class AristaConversions {
     // No remote AS set.
     if (neighbor.getRemoteAs() == null) {
       w.redFlag("No remote-as configured for " + name);
+      return false;
     }
 
     return true;
@@ -326,9 +327,8 @@ final class AristaConversions {
               .setPeerAddress(prefix.getStartIp());
     }
 
-    // TODO:
-    newNeighborBuilder.setClusterId(proc.getRouterId().asLong());
-    //        firstNonNull(vrfConfig.getClusterId(), proc.getRouterId()).asLong());
+    newNeighborBuilder.setClusterId(
+        firstNonNull(vrfConfig.getClusterId(), proc.getRouterId()).asLong());
 
     newNeighborBuilder.setDescription(neighbor.getDescription());
 
@@ -366,7 +366,7 @@ final class AristaConversions {
     if (v4Enabled) {
       ipv4FamilyBuilder.setAddressFamilyCapabilities(
           AddressFamilyCapabilities.builder()
-              .setAdvertiseInactive(Boolean.FALSE) // todo
+              .setAdvertiseInactive(firstNonNull(vrfConfig.getAdvertiseInactive(), Boolean.FALSE))
               .setAllowLocalAsIn(firstNonNull(neighbor.getAllowAsIn(), 0) > 0)
               .setAllowRemoteAsOut(true) // this is always true on Arista
               .setSendCommunity(firstNonNull(neighbor.getSendCommunity(), Boolean.FALSE))
@@ -379,11 +379,29 @@ final class AristaConversions {
               inboundMap != null && c.getRoutingPolicies().containsKey(inboundMap)
                   ? inboundMap
                   : null)
-          .setRouteReflectorClient(firstNonNull(/* todo */ null, Boolean.FALSE));
+          .setRouteReflectorClient(firstNonNull(neighbor.getRouteReflectorClient(), Boolean.FALSE));
     }
 
     // Export policy
     List<Statement> exportStatements = new LinkedList<>();
+    if (v4Enabled && neighbor.getDefaultOriginate() != null) {
+      // 1. Unconditionally generate a default route that is sent directly to this neighbor, without
+      // going through the export policy.
+      GeneratedRoute defaultRoute =
+          GeneratedRoute.builder()
+              .setNetwork(Prefix.ZERO)
+              .setAdmin(MAX_ADMINISTRATIVE_COST)
+              .setAttributePolicy(neighbor.getDefaultOriginate().getRouteMap())
+              .build();
+      newNeighborBuilder.setGeneratedRoutes(ImmutableSet.of(defaultRoute));
+
+      // 2. Do not export any other default route to this neighbor, since the generated route should
+      // dominate.
+      exportStatements.add(
+          new If(
+              Common.matchDefaultRoute(),
+              ImmutableList.of(Statements.ReturnFalse.toStaticStatement())));
+    }
     if (firstNonNull(neighbor.getNextHopSelf(), Boolean.FALSE)) {
       exportStatements.add(new SetNextHop(SelfNextHop.getInstance()));
     }
@@ -391,27 +409,6 @@ final class AristaConversions {
         != RemovePrivateAsMode.NONE) {
       // TODO(handle different types of RemovePrivateAs)
       exportStatements.add(RemovePrivateAs.toStaticStatement());
-    }
-
-    // If defaultOriginate is set, generate route and default route export policy. Default route
-    // will match this policy and get exported without going through the rest of the export policy.
-    // TODO Verify that nextHopSelf and removePrivateAs settings apply to default-originate route.
-    if (v4Enabled && naf4.getDefaultOriginate() != null) {
-      initBgpDefaultRouteExportPolicy(c);
-      exportStatements.add(
-          new If(
-              "Export default route from peer with default-originate configured",
-              new CallExpr(generatedBgpDefaultRouteExportPolicyName(true)),
-              singletonList(Statements.ReturnTrue.toStaticStatement()),
-              ImmutableList.of()));
-
-      GeneratedRoute defaultRoute =
-          GeneratedRoute.builder()
-              .setNetwork(Prefix.ZERO)
-              .setAdmin(MAX_ADMINISTRATIVE_COST)
-              .setGenerationPolicy(naf4.getDefaultOriginate().getRouteMap())
-              .build();
-      newNeighborBuilder.setGeneratedRoutes(ImmutableSet.of(defaultRoute));
     }
 
     // Peer-specific export policy, after matching default-originate route.
@@ -462,7 +459,8 @@ final class AristaConversions {
           .setPropagateUnmatched(true)
           .setAddressFamilyCapabilities(
               AddressFamilyCapabilities.builder()
-                  .setAdvertiseInactive(Boolean.FALSE) // todo
+                  .setAdvertiseInactive(
+                      firstNonNull(vrfConfig.getAdvertiseInactive(), Boolean.FALSE))
                   .setAllowLocalAsIn(Boolean.FALSE) // todo
                   .setAllowRemoteAsOut(Boolean.FALSE) // todo
                   .setSendCommunity(firstNonNull(neighbor.getSendCommunity(), Boolean.FALSE))

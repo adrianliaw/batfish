@@ -7,6 +7,7 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import org.batfish.datamodel.Ip;
 import org.batfish.datamodel.Prefix;
+import org.batfish.datamodel.Prefix6;
 import org.batfish.datamodel.bgp.RouteDistinguisher;
 import org.batfish.datamodel.bgp.community.ExtendedCommunity;
 
@@ -14,8 +15,10 @@ import org.batfish.datamodel.bgp.community.ExtendedCommunity;
 public final class AristaBgpVrf implements Serializable {
 
   private boolean _defaultIpv4Unicast;
+  @Nullable private Boolean _advertiseInactive;
   @Nullable private Boolean _bestpathAsPathMultipathRelax;
   @Nullable private AristaBgpBestpathTieBreaker _bestpathTieBreaker;
+  @Nullable private Ip _clusterId;
   @Nullable private Long _defaultMetric;
   @Nullable private Integer _ebgpAdminDistance;
   @Nullable private ExtendedCommunity _exportRouteTarget;
@@ -37,6 +40,7 @@ public final class AristaBgpVrf implements Serializable {
   @Nullable private Ip _routerId;
   @Nullable private Boolean _shutdown;
   @Nonnull private final Map<Prefix, AristaBgpAggregateNetwork> _v4aggregates;
+  @Nonnull private final Map<Prefix6, AristaBgpAggregateNetwork> _v6aggregates;
   @Nonnull private final Map<Ip, AristaBgpV4Neighbor> _v4neighbors;
   @Nonnull private final Map<Prefix, AristaBgpV4DynamicNeighbor> _v4DynamicNeighbors;
   @Nullable private AristaBgpVrfIpv4UnicastAddressFamily _v4UnicastAf;
@@ -47,6 +51,7 @@ public final class AristaBgpVrf implements Serializable {
     _name = name;
     _defaultIpv4Unicast = true;
     _v4aggregates = new HashMap<>(0);
+    _v6aggregates = new HashMap<>(0);
     _v4DynamicNeighbors = new HashMap<>(0);
     _v4neighbors = new HashMap<>(0);
     _redistributionPolicies = new HashMap<>(0);
@@ -58,6 +63,15 @@ public final class AristaBgpVrf implements Serializable {
 
   public void setDefaultIpv4Unicast(boolean defaultIpv4Unicast) {
     _defaultIpv4Unicast = defaultIpv4Unicast;
+  }
+
+  @Nullable
+  public Boolean getAdvertiseInactive() {
+    return _advertiseInactive;
+  }
+
+  public void setAdvertiseInactive(@Nullable Boolean advertiseInactive) {
+    _advertiseInactive = advertiseInactive;
   }
 
   @Nullable
@@ -76,6 +90,15 @@ public final class AristaBgpVrf implements Serializable {
 
   public void setBestpathTieBreaker(@Nullable AristaBgpBestpathTieBreaker bestpathTieBreaker) {
     _bestpathTieBreaker = bestpathTieBreaker;
+  }
+
+  @Nullable
+  public Ip getClusterId() {
+    return _clusterId;
+  }
+
+  public void setClusterId(@Nullable Ip clusterId) {
+    _clusterId = clusterId;
   }
 
   @Nullable
@@ -253,6 +276,11 @@ public final class AristaBgpVrf implements Serializable {
   @Nonnull
   public Map<Prefix, AristaBgpAggregateNetwork> getV4aggregates() {
     return _v4aggregates;
+  }
+
+  @Nonnull
+  public Map<Prefix6, AristaBgpAggregateNetwork> getV6aggregates() {
+    return _v6aggregates;
   }
 
   @Nonnull

@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.HashMap;
@@ -27,16 +28,15 @@ import org.batfish.common.BfConsts;
 import org.batfish.common.Warning;
 import org.batfish.common.Warnings;
 import org.batfish.common.util.BatfishObjectMapper;
-import org.batfish.config.Settings;
 import org.batfish.datamodel.Configuration;
 import org.batfish.datamodel.DeviceType;
+import org.batfish.datamodel.FirewallSessionInterfaceInfo;
 import org.batfish.datamodel.Interface;
 import org.batfish.datamodel.Ip;
 import org.batfish.datamodel.IpAccessList;
 import org.batfish.datamodel.IpAccessListLine;
 import org.batfish.datamodel.Vrf;
 import org.batfish.datamodel.answers.ParseVendorConfigurationAnswerElement;
-import org.batfish.main.Batfish;
 import org.batfish.representation.aws.Instance.Status;
 
 /** Represents an AWS region */
@@ -71,6 +71,8 @@ final class Region implements Serializable {
 
   @Nonnull private final Map<String, NetworkInterface> _networkInterfaces;
 
+  @Nonnull private final Map<String, PrefixList> _prefixLists;
+
   @Nonnull private final Map<String, RdsInstance> _rdsInstances;
 
   @Nonnull private final Map<String, RouteTable> _routeTables;
@@ -78,6 +80,18 @@ final class Region implements Serializable {
   @Nonnull private final Map<String, SecurityGroup> _securityGroups;
 
   @Nonnull private final Map<String, Subnet> _subnets;
+
+  @Nonnull private final Map<String, TransitGatewayAttachment> _transitGatewayAttachments;
+
+  @Nonnull private final Map<String, TransitGatewayPropagations> _transitGatewayPropagations;
+
+  @Nonnull private final Map<String, TransitGatewayRouteTable> _transitGatewayRouteTables;
+
+  @Nonnull private final Map<String, TransitGatewayStaticRoutes> _transitGatewayStaticRoutes;
+
+  @Nonnull private final Map<String, TransitGatewayVpcAttachment> _transitGatewayVpcAttachments;
+
+  @Nonnull private final Map<String, TransitGateway> _transitGateways;
 
   @Nonnull private final Map<String, VpcPeeringConnection> _vpcPeerings;
 
@@ -90,6 +104,13 @@ final class Region implements Serializable {
   public Region(String name) {
     this(
         name,
+        new HashMap<>(),
+        new HashMap<>(),
+        new HashMap<>(),
+        new HashMap<>(),
+        new HashMap<>(),
+        new HashMap<>(),
+        new HashMap<>(),
         new HashMap<>(),
         new HashMap<>(),
         new HashMap<>(),
@@ -120,10 +141,17 @@ final class Region implements Serializable {
       Map<String, NatGateway> natGateways,
       Map<String, NetworkAcl> networkAcls,
       Map<String, NetworkInterface> networkInterfaces,
+      Map<String, PrefixList> prefixLists,
       Map<String, RdsInstance> rdsInstances,
       Map<String, RouteTable> routeTables,
       Map<String, SecurityGroup> securityGroups,
       Map<String, Subnet> subnets,
+      Map<String, TransitGatewayAttachment> transitGatewayAttachments,
+      Map<String, TransitGatewayPropagations> transitGatewayPropagations,
+      Map<String, TransitGatewayRouteTable> transitGatewayRouteTables,
+      Map<String, TransitGatewayStaticRoutes> transitGatewayStaticRoutes,
+      Map<String, TransitGatewayVpcAttachment> transitGatewayVpcAttachments,
+      Map<String, TransitGateway> transitGateways,
       Map<String, VpcPeeringConnection> vpcPeerings,
       Map<String, Vpc> vpcs,
       Map<String, VpnConnection> vpnConnections,
@@ -138,10 +166,17 @@ final class Region implements Serializable {
     _natGateways = natGateways;
     _networkAcls = networkAcls;
     _networkInterfaces = networkInterfaces;
+    _prefixLists = prefixLists;
     _rdsInstances = rdsInstances;
     _routeTables = routeTables;
     _securityGroups = securityGroups;
     _subnets = subnets;
+    _transitGatewayAttachments = transitGatewayAttachments;
+    _transitGatewayPropagations = transitGatewayPropagations;
+    _transitGatewayRouteTables = transitGatewayRouteTables;
+    _transitGatewayStaticRoutes = transitGatewayStaticRoutes;
+    _transitGatewayVpcAttachments = transitGatewayVpcAttachments;
+    _transitGateways = transitGateways;
     _vpcPeerings = vpcPeerings;
     _vpcs = vpcs;
     _vpnConnections = vpnConnections;
@@ -149,8 +184,7 @@ final class Region implements Serializable {
   }
 
   void addConfigElement(
-      JsonNode json, String sourceFileName, ParseVendorConfigurationAnswerElement pvcae)
-      throws IOException {
+      JsonNode json, String sourceFileName, ParseVendorConfigurationAnswerElement pvcae) {
 
     Iterator<?> keys = json.fieldNames();
 
@@ -166,7 +200,10 @@ final class Region implements Serializable {
       ThrowingConsumer<JsonNode, IOException> integratorFunction = getChildConsumer(key);
 
       if (integratorFunction == null) {
-        // Add warning for unrecognized key in AWS file
+        // Add warning for unrecognized key in AWS file but don't warn if there is no data
+        if (json.get(key).isArray() && json.get(key).size() == 0) {
+          continue;
+        }
         pvcae.addUnimplementedWarning(
             BfConsts.RELPATH_AWS_CONFIGS_FILE,
             new Warning(
@@ -186,7 +223,17 @@ final class Region implements Serializable {
 
       ArrayNode array = (ArrayNode) json.get(key);
       for (int index = 0; index < array.size(); index++) {
-        integratorFunction.accept(array.get(index));
+        try {
+          integratorFunction.accept(array.get(index));
+        } catch (IOException | IllegalArgumentException e) {
+          pvcae.addRedFlagWarning(
+              BfConsts.RELPATH_AWS_CONFIGS_FILE,
+              new Warning(
+                  String.format(
+                      "Exception while parsing '%s' in AWS file %s: %s",
+                      key, sourceFileName, e.getMessage()),
+                  "AWS"));
+        }
       }
     }
   }
@@ -261,6 +308,11 @@ final class Region implements Serializable {
               BatfishObjectMapper.mapper().convertValue(json, NetworkInterface.class);
           _networkInterfaces.put(networkInterface.getId(), networkInterface);
         };
+      case AwsVpcEntity.JSON_KEY_PREFIX_LISTS:
+        return json -> {
+          PrefixList prefixList = BatfishObjectMapper.mapper().convertValue(json, PrefixList.class);
+          _prefixLists.put(prefixList.getId(), prefixList);
+        };
       case AwsVpcEntity.JSON_KEY_RESERVATIONS:
         return json -> {
           // instances are embedded inside reservations
@@ -287,6 +339,56 @@ final class Region implements Serializable {
           Subnet subnet = BatfishObjectMapper.mapper().convertValue(json, Subnet.class);
           _subnets.put(subnet.getId(), subnet);
         };
+      case AwsVpcEntity.JSON_KEY_TRANSIT_GATEWAY_ATTACHMENTS:
+        return json -> {
+          String state = json.get(AwsVpcEntity.JSON_KEY_STATE).textValue();
+          if (state.equals(AwsVpcEntity.STATE_AVAILABLE)) {
+            TransitGatewayAttachment tGatewayAttachment =
+                BatfishObjectMapper.mapper().convertValue(json, TransitGatewayAttachment.class);
+            _transitGatewayAttachments.put(tGatewayAttachment.getId(), tGatewayAttachment);
+          }
+        };
+      case AwsVpcEntity.JSON_KEY_TRANSIT_GATEWAY_PROPAGATIONS:
+        return json -> {
+          TransitGatewayPropagations propagations =
+              BatfishObjectMapper.mapper().convertValue(json, TransitGatewayPropagations.class);
+          _transitGatewayPropagations.put(propagations.getId(), propagations);
+        };
+      case AwsVpcEntity.JSON_KEY_TRANSIT_GATEWAY_ROUTE_TABLES:
+        return json -> {
+          String state = json.get(AwsVpcEntity.JSON_KEY_STATE).textValue();
+          if (state.equals(AwsVpcEntity.STATE_AVAILABLE)) {
+            TransitGatewayRouteTable transitGatewayRouteTable =
+                BatfishObjectMapper.mapper().convertValue(json, TransitGatewayRouteTable.class);
+            _transitGatewayRouteTables.put(
+                transitGatewayRouteTable.getId(), transitGatewayRouteTable);
+          }
+        };
+      case AwsVpcEntity.JSON_KEY_TRANSIT_GATEWAY_STATIC_ROUTES:
+        return json -> {
+          TransitGatewayStaticRoutes transitGatewayStaticRoutes =
+              BatfishObjectMapper.mapper().convertValue(json, TransitGatewayStaticRoutes.class);
+          _transitGatewayStaticRoutes.put(
+              transitGatewayStaticRoutes.getId(), transitGatewayStaticRoutes);
+        };
+      case AwsVpcEntity.JSON_KEY_TRANSIT_GATEWAY_VPC_ATTACHMENTS:
+        return json -> {
+          String state = json.get(AwsVpcEntity.JSON_KEY_STATE).textValue();
+          if (state.equals(AwsVpcEntity.STATE_AVAILABLE)) {
+            TransitGatewayVpcAttachment tGatewayVpcAttachment =
+                BatfishObjectMapper.mapper().convertValue(json, TransitGatewayVpcAttachment.class);
+            _transitGatewayVpcAttachments.put(tGatewayVpcAttachment.getId(), tGatewayVpcAttachment);
+          }
+        };
+      case AwsVpcEntity.JSON_KEY_TRANSIT_GATEWAYS:
+        return json -> {
+          String state = json.get(AwsVpcEntity.JSON_KEY_STATE).textValue();
+          if (state.equals(AwsVpcEntity.STATE_AVAILABLE)) {
+            TransitGateway tGateway =
+                BatfishObjectMapper.mapper().convertValue(json, TransitGateway.class);
+            _transitGateways.put(tGateway.getId(), tGateway);
+          }
+        };
       case AwsVpcEntity.JSON_KEY_VPCS:
         return json -> {
           Vpc vpc = BatfishObjectMapper.mapper().convertValue(json, Vpc.class);
@@ -296,7 +398,7 @@ final class Region implements Serializable {
         return json -> {
           String code =
               json.get(AwsVpcEntity.JSON_KEY_STATUS).get(AwsVpcEntity.JSON_KEY_CODE).textValue();
-          if (!code.equals(AwsVpcEntity.STATUS_DELETED)) {
+          if (code.equals(AwsVpcEntity.STATUS_ACTIVE)) {
             VpcPeeringConnection vpcPeerConn =
                 BatfishObjectMapper.mapper().convertValue(json, VpcPeeringConnection.class);
             _vpcPeerings.put(vpcPeerConn.getId(), vpcPeerConn);
@@ -313,12 +415,23 @@ final class Region implements Serializable {
         };
       case AwsVpcEntity.JSON_KEY_VPN_GATEWAYS:
         return json -> {
-          VpnGateway vpnGateway = BatfishObjectMapper.mapper().convertValue(json, VpnGateway.class);
-          _vpnGateways.put(vpnGateway.getId(), vpnGateway);
+          String state = json.get(AwsVpcEntity.JSON_KEY_STATE).textValue();
+          if (state.equals(AwsVpcEntity.STATE_AVAILABLE)) {
+            VpnGateway vpnGateway =
+                BatfishObjectMapper.mapper().convertValue(json, VpnGateway.class);
+            _vpnGateways.put(vpnGateway.getId(), vpnGateway);
+          }
         };
       default:
         return null;
     }
+  }
+
+  @Nonnull
+  Set<TransitGatewayRouteTable> getTransitGatewayRouteTables(String transitGatewayId) {
+    return _transitGatewayRouteTables.values().stream()
+        .filter(rt -> rt.getGatewayId().equals(transitGatewayId))
+        .collect(ImmutableSet.toImmutableSet());
   }
 
   @Nonnull
@@ -367,6 +480,11 @@ final class Region implements Serializable {
   }
 
   @Nonnull
+  Map<String, PrefixList> getPrefixLists() {
+    return _prefixLists;
+  }
+
+  @Nonnull
   Map<String, NetworkInterface> getNetworkInterfaces() {
     return _networkInterfaces;
   }
@@ -389,6 +507,36 @@ final class Region implements Serializable {
   @Nonnull
   Map<String, Subnet> getSubnets() {
     return _subnets;
+  }
+
+  @Nonnull
+  Map<String, TransitGatewayAttachment> getTransitGatewayAttachments() {
+    return _transitGatewayAttachments;
+  }
+
+  @Nonnull
+  Map<String, TransitGatewayPropagations> getTransitGatewayPropagations() {
+    return _transitGatewayPropagations;
+  }
+
+  @Nonnull
+  Map<String, TransitGatewayRouteTable> getTransitGatewayRouteTables() {
+    return _transitGatewayRouteTables;
+  }
+
+  @Nonnull
+  Map<String, TransitGatewayStaticRoutes> getTransitGatewayStaticRoutes() {
+    return _transitGatewayStaticRoutes;
+  }
+
+  @Nonnull
+  Map<String, TransitGatewayVpcAttachment> getTransitGatewayVpcAttachments() {
+    return _transitGatewayVpcAttachments;
+  }
+
+  @Nonnull
+  Map<String, TransitGateway> getTransitGateways() {
+    return _transitGateways;
   }
 
   @Nonnull
@@ -426,86 +574,67 @@ final class Region implements Serializable {
     }
   }
 
-  void toConfigurationNodes(
-      AwsConfiguration awsConfiguration,
-      Map<String, Configuration> configurationNodes,
-      Settings settings,
-      Map<String, Warnings> warningsByHost) {
+  void toConfigurationNodes(ConvertedConfiguration awsConfiguration, Warnings warnings) {
 
     // updates the Ips which have been allocated already in subnets of all interfaces
     updateAllocatedIps();
 
     for (Vpc vpc : getVpcs().values()) {
-      Warnings warnings = Batfish.buildWarnings(settings);
       Configuration cfgNode = vpc.toConfigurationNode(awsConfiguration, this, warnings);
-      configurationNodes.put(cfgNode.getHostname(), cfgNode);
-      warningsByHost.put(cfgNode.getHostname(), warnings);
+      awsConfiguration.addNode(cfgNode);
     }
 
     for (ElasticsearchDomain elasticsearchDomain : getElasticSearchDomains().values()) {
-      Warnings warnings = Batfish.buildWarnings(settings);
       Configuration cfgNode =
           elasticsearchDomain.toConfigurationNode(awsConfiguration, this, warnings);
       cfgNode.setDeviceType(DeviceType.HOST);
-      configurationNodes.put(cfgNode.getHostname(), cfgNode);
-      warningsByHost.put(cfgNode.getHostname(), warnings);
+      awsConfiguration.addNode(cfgNode);
     }
 
     for (InternetGateway igw : getInternetGateways().values()) {
-      Warnings warnings = Batfish.buildWarnings(settings);
       Configuration cfgNode = igw.toConfigurationNode(awsConfiguration, this);
-      configurationNodes.put(cfgNode.getHostname(), cfgNode);
-      warningsByHost.put(cfgNode.getHostname(), warnings);
+      awsConfiguration.addNode(cfgNode);
     }
 
     for (NatGateway ngw : getNatGateways().values()) {
-      Warnings warnings = Batfish.buildWarnings(settings);
       warnings.redFlag("NAT functionality not yet implemented for " + ngw.getId());
       Configuration cfgNode = ngw.toConfigurationNode(awsConfiguration, this, warnings);
-      configurationNodes.put(cfgNode.getHostname(), cfgNode);
-      warningsByHost.put(cfgNode.getHostname(), warnings);
+      awsConfiguration.addNode(cfgNode);
     }
 
     for (VpnGateway vgw : getVpnGateways().values()) {
-      Warnings warnings = Batfish.buildWarnings(settings);
       Configuration cfgNode = vgw.toConfigurationNode(awsConfiguration, this, warnings);
-      configurationNodes.put(cfgNode.getHostname(), cfgNode);
-      warningsByHost.put(cfgNode.getHostname(), warnings);
+      awsConfiguration.addNode(cfgNode);
     }
 
     for (Instance instance : getInstances().values()) {
-      Warnings warnings = Batfish.buildWarnings(settings);
-      Configuration cfgNode = instance.toConfigurationNode(this, warnings);
+      Configuration cfgNode = instance.toConfigurationNode(awsConfiguration, this, warnings);
       cfgNode.setDeviceType(DeviceType.HOST);
-      configurationNodes.put(cfgNode.getHostname(), cfgNode);
-      warningsByHost.put(cfgNode.getHostname(), warnings);
+      awsConfiguration.addNode(cfgNode);
     }
 
     for (RdsInstance rdsInstance : getRdsInstances().values()) {
-      Warnings warnings = Batfish.buildWarnings(settings);
       Configuration cfgNode = rdsInstance.toConfigurationNode(awsConfiguration, this, warnings);
       cfgNode.setDeviceType(DeviceType.HOST);
-      configurationNodes.put(cfgNode.getHostname(), cfgNode);
-      warningsByHost.put(cfgNode.getHostname(), warnings);
+      awsConfiguration.addNode(cfgNode);
     }
 
     for (Subnet subnet : getSubnets().values()) {
-      Warnings warnings = Batfish.buildWarnings(settings);
       Configuration cfgNode = subnet.toConfigurationNode(awsConfiguration, this, warnings);
-      configurationNodes.put(cfgNode.getHostname(), cfgNode);
-      warningsByHost.put(cfgNode.getHostname(), warnings);
+      awsConfiguration.addNode(cfgNode);
     }
 
-    for (VpnConnection vpnConnection : getVpnConnections().values()) {
-      Warnings warnings = Batfish.buildWarnings(settings);
-      vpnConnection.applyToVpnGateway(awsConfiguration, this, warnings);
-      warningsByHost.put(vpnConnection.getId(), warnings);
+    for (TransitGateway tgw : getTransitGateways().values()) {
+      Configuration cfgNode = tgw.toConfigurationNode(awsConfiguration, this, warnings);
+      awsConfiguration.addNode(cfgNode);
     }
 
-    applySecurityGroupsAcls(configurationNodes);
+    // VpcPeeringConnections are processed in AwsConfiguration since they can be cross region
+
+    applySecurityGroupsAcls(awsConfiguration.getConfigurationNodes(), warnings);
 
     // TODO: for now, set all interfaces to have the same bandwidth
-    for (Configuration cfgNode : configurationNodes.values()) {
+    for (Configuration cfgNode : awsConfiguration.getConfigurationNodes().values()) {
       for (Vrf vrf : cfgNode.getVrfs().values()) {
         for (Interface iface : vrf.getInterfaces().values()) {
           iface.setBandwidth(1E12d);
@@ -514,7 +643,7 @@ final class Region implements Serializable {
     }
   }
 
-  private void applySecurityGroupsAcls(Map<String, Configuration> cfgNodes) {
+  private void applySecurityGroupsAcls(Map<String, Configuration> cfgNodes, Warnings warnings) {
     for (Entry<String, Set<SecurityGroup>> entry : _configurationSecurityGroups.entrySet()) {
       Configuration cfgNode = cfgNodes.get(entry.getKey());
       List<IpAccessListLine> inboundRules = new LinkedList<>();
@@ -523,7 +652,7 @@ final class Region implements Serializable {
           .getValue()
           .forEach(
               securityGroup ->
-                  securityGroup.addInOutAccessLines(inboundRules, outboundRules, this));
+                  securityGroup.addInOutAccessLines(inboundRules, outboundRules, this, warnings));
 
       // create ACLs from inboundRules and outboundRules
       IpAccessList inAcl =
@@ -542,6 +671,9 @@ final class Region implements Serializable {
               iface -> {
                 iface.setIncomingFilter(inAcl);
                 iface.setOutgoingFilter(outAcl);
+                iface.setFirewallSessionInterfaceInfo(
+                    new FirewallSessionInterfaceInfo(
+                        false, ImmutableList.of(iface.getName()), null, null));
               });
     }
   }
@@ -575,6 +707,39 @@ final class Region implements Serializable {
   Optional<InternetGateway> findInternetGateway(String vpcId) {
     return _internetGateways.values().stream()
         .filter(igw -> igw.getAttachmentVpcIds().contains(vpcId))
+        .findFirst();
+  }
+
+  /** Returns the {@link TransitGateway} that owns the provided route table */
+  Optional<TransitGateway> findTransitGateway(String routeTableId) {
+    return _transitGateways.values().stream()
+        .filter(
+            tgw ->
+                _transitGatewayRouteTables.values().stream()
+                    .anyMatch(tgwRt -> tgwRt.getId().equals(routeTableId)))
+        .findFirst();
+  }
+
+  /** Returns {@link TransitGatewayAttachment} given the gateway and attachment id's */
+  Optional<TransitGatewayAttachment> findTransitGatewayAttachment(
+      String attachmentId, String transitGatewayId) {
+    return _transitGatewayAttachments.values().stream()
+        .filter(a -> a.getId().equals(attachmentId) && a.getGatewayId().equals(transitGatewayId))
+        .findFirst();
+  }
+
+  /** Returns {@link TransitGatewayVpcAttachment} between the VPC and Transit Gateway */
+  Optional<TransitGatewayVpcAttachment> findTransitGatewayVpcAttachment(
+      String vpcId, String transitGatewayId) {
+    return _transitGatewayVpcAttachments.values().stream()
+        .filter(a -> a.getVpcId().equals(vpcId) && a.getGatewayId().equals(transitGatewayId))
+        .findFirst();
+  }
+
+  /** Returns {@link VpnConnection} for the Transit Gateway */
+  Optional<VpnConnection> findTransitGatewayVpnConnection(String vpnId, String transitGatewayId) {
+    return _vpnConnections.values().stream()
+        .filter(c -> c.getId().equals(vpnId) && c.getAwsGatewayId().equals(transitGatewayId))
         .findFirst();
   }
 
@@ -633,10 +798,17 @@ final class Region implements Serializable {
     private Map<String, NatGateway> _natGateways;
     private Map<String, NetworkAcl> _networkAcls;
     private Map<String, NetworkInterface> _networkInterfaces;
+    private Map<String, PrefixList> _prefixLists;
     private Map<String, RdsInstance> _rdsInstances;
     private Map<String, RouteTable> _routeTables;
     private Map<String, SecurityGroup> _securityGroups;
     private Map<String, Subnet> _subnets;
+    private Map<String, TransitGatewayAttachment> _transitGatewayAttachments;
+    private Map<String, TransitGatewayPropagations> _transitGatewayPropagations;
+    private Map<String, TransitGatewayRouteTable> _transitGatewayRouteTables;
+    private Map<String, TransitGatewayStaticRoutes> _transitGatewayStaticRoutes;
+    private Map<String, TransitGatewayVpcAttachment> _transitGatewayVpcAttachments;
+    private Map<String, TransitGateway> _transitGateways;
     private Map<String, VpcPeeringConnection> _vpcPeerings;
     private Map<String, Vpc> _vpcs;
     private Map<String, VpnConnection> _vpnConnections;
@@ -698,6 +870,11 @@ final class Region implements Serializable {
       return this;
     }
 
+    public RegionBuilder setPrefixLists(Map<String, PrefixList> prefixLists) {
+      this._prefixLists = prefixLists;
+      return this;
+    }
+
     public RegionBuilder setRdsInstances(Map<String, RdsInstance> rdsInstances) {
       this._rdsInstances = rdsInstances;
       return this;
@@ -715,6 +892,41 @@ final class Region implements Serializable {
 
     public RegionBuilder setSubnets(Map<String, Subnet> subnets) {
       this._subnets = subnets;
+      return this;
+    }
+
+    public RegionBuilder setTransitGatewayAttachments(
+        Map<String, TransitGatewayAttachment> transitGatewayAttachments) {
+      this._transitGatewayAttachments = transitGatewayAttachments;
+      return this;
+    }
+
+    public RegionBuilder setTransitGatewayPropagations(
+        Map<String, TransitGatewayPropagations> transitGatewayPropagations) {
+      this._transitGatewayPropagations = transitGatewayPropagations;
+      return this;
+    }
+
+    public RegionBuilder setTransitGatewayRouteTables(
+        Map<String, TransitGatewayRouteTable> transitGatewayRouteTables) {
+      this._transitGatewayRouteTables = transitGatewayRouteTables;
+      return this;
+    }
+
+    public RegionBuilder setTransitGatewayStaticRoutes(
+        Map<String, TransitGatewayStaticRoutes> transitGatewayStaticRoutes) {
+      this._transitGatewayStaticRoutes = transitGatewayStaticRoutes;
+      return this;
+    }
+
+    public RegionBuilder setTransitGatewayVpcAttachments(
+        Map<String, TransitGatewayVpcAttachment> transitGatewayVpcAttachments) {
+      this._transitGatewayVpcAttachments = transitGatewayVpcAttachments;
+      return this;
+    }
+
+    public RegionBuilder setTransitGateways(Map<String, TransitGateway> transitGateways) {
+      this._transitGateways = transitGateways;
       return this;
     }
 
@@ -751,10 +963,17 @@ final class Region implements Serializable {
           firstNonNull(_natGateways, ImmutableMap.of()),
           firstNonNull(_networkAcls, ImmutableMap.of()),
           firstNonNull(_networkInterfaces, ImmutableMap.of()),
+          firstNonNull(_prefixLists, ImmutableMap.of()),
           firstNonNull(_rdsInstances, ImmutableMap.of()),
           firstNonNull(_routeTables, ImmutableMap.of()),
           firstNonNull(_securityGroups, ImmutableMap.of()),
           firstNonNull(_subnets, ImmutableMap.of()),
+          firstNonNull(_transitGatewayAttachments, ImmutableMap.of()),
+          firstNonNull(_transitGatewayPropagations, ImmutableMap.of()),
+          firstNonNull(_transitGatewayRouteTables, ImmutableMap.of()),
+          firstNonNull(_transitGatewayStaticRoutes, ImmutableMap.of()),
+          firstNonNull(_transitGatewayVpcAttachments, ImmutableMap.of()),
+          firstNonNull(_transitGateways, ImmutableMap.of()),
           firstNonNull(_vpcPeerings, ImmutableMap.of()),
           firstNonNull(_vpcs, ImmutableMap.of()),
           firstNonNull(_vpnConnections, ImmutableMap.of()),
